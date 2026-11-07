@@ -45,7 +45,7 @@ export const mockDebrief1: Debrief = {
       quote: "Lots of people go through rough patches. You'll be fine once you're sleeping again.",
       feedback:
         "Reassurance before understanding read as dismissal. A reflection (\"It sounds like things have felt heavy since the job loss\") invites more disclosure.",
-      citations: [{ sourceId: "oars-02", source: "Motivational Interviewing", section: "OARS: Reflections" }],
+      citations: [{ sourceId: "oars-02", source: "SAMHSA TIP 35", section: "Reflective listening" }],
     },
     {
       kind: "missed",
@@ -53,16 +53,16 @@ export const mockDebrief1: Debrief = {
       feedback:
         "Low mood, insomnia, and a major loss warrant a direct suicide screen. Asking directly does not increase risk.",
       citations: [
-        { sourceId: "cssrs-01", source: "C-SSRS Screener", section: "Q1–2" },
-        { sourceId: "safet-01", source: "SAMHSA SAFE-T", section: "Step 1" },
+        { sourceId: "cssrs-01", source: "C-SSRS Screener", section: "Q1–5" },
+        { sourceId: "safet-03", source: "SAMHSA SAFE-T", section: "Step 3: Suicide inquiry" },
       ],
     },
     {
       kind: "unsafe",
       timelineRef: 5,
       feedback:
-        "Recommending a 30-day sleep aid without a risk assessment may increase access to means. Limiting lethal means is core to safety planning.",
-      citations: [{ sourceId: "sb-06", source: "Stanley-Brown Safety Plan", section: "Step 6" }],
+        "Recommending a 30-day sleep aid without a risk assessment may increase access to means. Counseling on lethal means is part of the plan.",
+      citations: [{ sourceId: "safet-04", source: "SAMHSA SAFE-T", section: "Steps 4–5: Means counseling" }],
     },
     {
       kind: "strength",

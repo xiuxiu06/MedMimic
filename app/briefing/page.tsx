@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { AppHeader } from "@/components/AppHeader";
-import { PortraitPlaceholder } from "@/components/PortraitPlaceholder";
+import { JordanAvatar } from "@/components/JordanAvatar";
 import { ContentNote, SafetyFooter } from "@/components/SafetyFooter";
 
 // TODO (after H8 merge): read patient + intake from Person A's data/scenario.jordan.json.
@@ -72,7 +72,7 @@ export default function BriefingPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-7">
-            <PortraitPlaceholder label="flat, tired" />
+            <JordanAvatar emotion="withdrawn" size={160} className="shrink-0" />
             <div className="flex min-w-0 flex-[1_1_280px] flex-col gap-2.5">
               <h1 className="font-display text-[40px] font-bold leading-tight tracking-tight">
                 Jordan Lee, 34
