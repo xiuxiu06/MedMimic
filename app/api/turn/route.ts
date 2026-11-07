@@ -129,7 +129,7 @@ async function generatePatientTextReply(
             content: [
               {
                 type: "text" as const,
-                text: "[DIRECTOR CUE FOR JORDAN: Stay strictly in first-person character ('I') as patient Jordan Lee speaking English (en-US) to the clinician examining you. Never give health disclaimers or advice. Reply naturally in 2–5 conversational sentences to what the clinician just said.]",
+                text: "[DIRECTOR CUE FOR JORDAN: Stay strictly in first-person character ('I') as patient Jordan Lee speaking English (en-US) to the clinician examining you. Never give health disclaimers or advice. Prefer 1–2 conversational sentences by default, or 3–4 sentences when sharing newly unlocked details or when more context feels appropriate.]",
               },
             ],
           },

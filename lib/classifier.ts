@@ -43,7 +43,7 @@ Classify ONLY the healthcare student's latest message into 1 to 4 labels from th
 
 Label definitions:
 - "asked_onset": Asks when sleep trouble or symptoms started, timeline/duration, or what life/work changes happened around onset.
-- "asked_mood": Asks about emotional state, mood, sadness, depression, energy, or loss of interest/pleasure.
+- "asked_mood": Specifically asks about emotional state, mood, sadness, depression, low spirits, energy, or loss of interest/pleasure (e.g., "How has your mood been?", "Have you been feeling down or depressed?", "How is all of this affecting you emotionally?"). IMPORTANT: Casual opening greetings like "Hello, how are you?", "Hi Jordan, how are you doing?", or "Hello, how are you feeling today?" are polite greetings ("other"), NOT "asked_mood".
 - "asked_hope": Asks about the future, hope, outlook, or whether things feel like they can get better.
 - "asked_SI_directly": Explicitly and directly asks about suicidal thoughts, wanting to die, not wanting to wake up, ending their life, or self-harm. IMPORTANT: vague questions like "Are you safe?" or "Having any dark thoughts?" do NOT count as "asked_SI_directly"—it must be direct and unambiguous.
 - "asked_plan": Asks about a specific suicide plan, method, preparation, or access to lethal means at home (e.g., pills, medications, weapons).
@@ -108,7 +108,16 @@ export function heuristicClassifyTurn(
   ) {
     labels.push("asked_onset");
   }
-  if (/\b(mood|feeling|sad|depress|down|enjoy|interest|energy)\b/.test(lower)) {
+  const isCasualGreeting =
+    /^(hi|hello|hey|good (morning|afternoon|evening))\b[^.?!]*\bhow (are you|are you doing|are you feeling( today)?|is it going)\b/i.test(
+      studentText.trim(),
+    );
+  if (
+    !isCasualGreeting &&
+    /\b(mood|feeling emotionally|sad|depress|down|enjoy|interest|spirits)\b/.test(
+      lower,
+    )
+  ) {
     labels.push("asked_mood");
   }
   if (/\b(future|hope|hopeless|ahead|better|outlook|point)\b/.test(lower)) {

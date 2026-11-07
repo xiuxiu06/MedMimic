@@ -1,7 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { GoogleGenAI, Modality, type LiveServerMessage } from "@google/genai";
+import {
+  GoogleGenAI,
+  Modality,
+  StartSensitivity,
+  type LiveServerMessage,
+} from "@google/genai";
 import { JORDAN_SCENARIO } from "../../lib/engine";
 import {
   isOutOfCharacterOrNonEnglish,
@@ -102,6 +107,8 @@ export function useGeminiLive(callbacks: UseGeminiLiveCallbacks) {
   const patientTranscriptBufRef = useRef<string>("");
   const studentTurnDispatchedRef = useRef<boolean>(false);
   const recoveryAttemptedRef = useRef<boolean>(false);
+  const awaitingModelReplyRef = useRef<boolean>(false);
+  const lastPlaybackEndedAtRef = useRef<number>(0);
 
   const stopMeter = useCallback(() => {
     if (meterFrameRef.current !== null) {
@@ -195,6 +202,7 @@ export function useGeminiLive(callbacks: UseGeminiLiveCallbacks) {
       source.onended = () => {
         activeSourcesRef.current.delete(source);
         if (activeSourcesRef.current.size === 0) {
+          lastPlaybackEndedAtRef.current = performance.now();
           setIsSpeaking(false);
           stopMeter();
         }
@@ -252,6 +260,8 @@ export function useGeminiLive(callbacks: UseGeminiLiveCallbacks) {
     studentTranscriptBufRef.current = "";
     patientTranscriptBufRef.current = "";
     studentTurnDispatchedRef.current = false;
+    recoveryAttemptedRef.current = false;
+    awaitingModelReplyRef.current = false;
     setLiveInputPreview("");
     setStatus("disconnected");
   }, [clearPlaybackQueue, stopMicCapture]);
@@ -301,12 +311,23 @@ export function useGeminiLive(callbacks: UseGeminiLiveCallbacks) {
           config: {
             responseModalities: [Modality.AUDIO],
             speechConfig: {
-              languageCode: "en-US",
+              voiceConfig: {
+                prebuiltVoiceConfig: {
+                  voiceName: "Achird",
+                },
+              },
             },
             inputAudioTranscription: {
               languageCodes: ["en-US"],
             },
             outputAudioTranscription: {},
+            realtimeInputConfig: {
+              automaticActivityDetection: {
+                startOfSpeechSensitivity:
+                  StartSensitivity.START_SENSITIVITY_LOW,
+                silenceDurationMs: 650,
+              },
+            },
             systemInstruction: {
               parts: [{ text: data.systemInstruction ?? "" }],
             },
@@ -325,10 +346,19 @@ export function useGeminiLive(callbacks: UseGeminiLiveCallbacks) {
 
               // Accumulate spoken student transcript (English-only ASR configured above)
               if (sc.inputTranscription?.text) {
+                if (sc.inputTranscription.text.trim()) {
+                  awaitingModelReplyRef.current = true;
+                }
                 studentTurnDispatchedRef.current = false;
                 recoveryAttemptedRef.current = false;
                 studentTranscriptBufRef.current += sc.inputTranscription.text;
                 setLiveInputPreview(studentTranscriptBufRef.current.trim());
+              }
+
+              // Guard: never play or display unprompted model speech if the user
+              // has not spoken or sent text since the previous turn finished.
+              if (!awaitingModelReplyRef.current && !micActiveRef.current) {
+                return;
               }
 
               // Process ALL parts in modelTurn (audio chunks, etc.)
@@ -358,6 +388,7 @@ export function useGeminiLive(callbacks: UseGeminiLiveCallbacks) {
 
                   if (!recoveryAttemptedRef.current && sessionRef.current) {
                     recoveryAttemptedRef.current = true;
+                    awaitingModelReplyRef.current = true;
                     try {
                       sessionRef.current.sendClientContent({
                         turns: [
@@ -365,7 +396,7 @@ export function useGeminiLive(callbacks: UseGeminiLiveCallbacks) {
                             role: "user",
                             parts: [
                               {
-                                text: "[DIRECTOR CUE FOR JORDAN — SILENT CORRECTION: Do NOT give disclaimers, health facts, or speak Spanish. Reply right now in 2–4 natural conversational sentences strictly in English (en-US) in first person ('I') as exhausted clinic patient Jordan Lee responding to the clinician.]",
+                                text: "[DIRECTOR CUE FOR JORDAN — SILENT CORRECTION: Do NOT give disclaimers, health facts, or speak Spanish. Reply right now in 1–2 natural conversational sentences (or 3–4 if appropriate) strictly in English (en-US) in first person ('I') as exhausted clinic patient Jordan Lee responding to the clinician.]",
                               },
                             ],
                           },
@@ -390,6 +421,7 @@ export function useGeminiLive(callbacks: UseGeminiLiveCallbacks) {
                   patientTranscriptBufRef.current,
                 );
                 patientTranscriptBufRef.current = "";
+                awaitingModelReplyRef.current = false;
                 if (
                   finalPatient &&
                   !isOutOfCharacterOrNonEnglish(finalPatient)
@@ -492,8 +524,29 @@ export function useGeminiLive(callbacks: UseGeminiLiveCallbacks) {
       processor.onaudioprocess = (event) => {
         if (!micActiveRef.current || !sessionRef.current) return;
         const inputData = event.inputBuffer.getChannelData(0);
+
+        const isPatientPlayingOrTail =
+          activeSourcesRef.current.size > 0 ||
+          performance.now() - lastPlaybackEndedAtRef.current < 400;
+
+        let sumSq = 0;
+        for (let i = 0; i < inputData.length; i++) {
+          sumSq += inputData[i] * inputData[i];
+        }
+        const rms = Math.sqrt(sumSq / inputData.length);
+
+        // Suppress laptop speaker bleed while Jordan's voice is playing (unless loud barge-in)
+        const effectiveInput =
+          isPatientPlayingOrTail && rms < 0.08
+            ? new Float32Array(inputData.length)
+            : inputData;
+
+        if (!isPatientPlayingOrTail ? rms > 0.008 : rms >= 0.08) {
+          awaitingModelReplyRef.current = true;
+        }
+
         const base64Audio = float32ToBase64Pcm16(
-          inputData,
+          effectiveInput,
           micCtx.sampleRate,
           16000,
         );
@@ -555,6 +608,7 @@ export function useGeminiLive(callbacks: UseGeminiLiveCallbacks) {
         // Prevent inputTranscription callback from re-triggering duplicate classification
         studentTurnDispatchedRef.current = true;
         recoveryAttemptedRef.current = false;
+        awaitingModelReplyRef.current = true;
         studentTranscriptBufRef.current = "";
         patientTranscriptBufRef.current = "";
 
@@ -568,37 +622,6 @@ export function useGeminiLive(callbacks: UseGeminiLiveCallbacks) {
           turnComplete: false,
         });
         sessionRef.current.sendRealtimeInput({ text: studentText });
-        return true;
-      } catch {
-        return false;
-      }
-    },
-    [],
-  );
-
-  /**
-   * Used when a spoken mic turn unlocked a critical disclosure while Live had already
-   * started a guarded reply: prompts Jordan to naturally add what they held back.
-   */
-  const triggerUnlockedFollowup = useCallback(
-    (directorCue: string, direction: string) => {
-      if (!sessionRef.current) return false;
-      try {
-        patientTranscriptBufRef.current = "";
-        recoveryAttemptedRef.current = false;
-        sessionRef.current.sendClientContent({
-          turns: [
-            {
-              role: "user",
-              parts: [
-                {
-                  text: `${directorCue}\n[DIRECTION: ${direction}]`,
-                },
-              ],
-            },
-          ],
-          turnComplete: true,
-        });
         return true;
       } catch {
         return false;
@@ -629,6 +652,5 @@ export function useGeminiLive(callbacks: UseGeminiLiveCallbacks) {
     stopMicCapture,
     injectEngineStatePrompt,
     sendTextForVoiceReply,
-    triggerUnlockedFollowup,
   };
 }

@@ -193,11 +193,6 @@ function EncounterWorkspace() {
   const timelineRef = useRef(timeline);
   const elapsedRef = useRef(engineState.elapsedSec);
   const pendingVoiceCheckpointRef = useRef<string | null>(null);
-  const pendingVoiceUnlockFollowupRef = useRef<{
-    unlocked: string[];
-    patientPrompt: string;
-  } | null>(null);
-  const followupSentRef = useRef<boolean>(false);
 
   useEffect(() => {
     stateRef.current = engineState;
@@ -359,18 +354,6 @@ function EncounterWorkspace() {
 
       const cue = data.liveDirectorCue ?? data.patientPrompt;
       liveRef.current?.injectEngineStatePrompt(cue);
-
-      if (
-        data.newlyUnlocked.includes("suicidal_thoughts") ||
-        data.newlyUnlocked.includes("low_mood") ||
-        data.newlyUnlocked.includes("plan_and_means")
-      ) {
-        pendingVoiceUnlockFollowupRef.current = {
-          unlocked: data.newlyUnlocked,
-          patientPrompt: cue,
-        };
-        followupSentRef.current = false;
-      }
     } catch {
       // Keep voice conversation flowing even if background classification hiccups
     }
@@ -390,41 +373,13 @@ function EncounterWorkspace() {
     messagesRef.current = nextMsgs;
     setMessages(nextMsgs);
 
-    // Check if a spoken race condition caused Jordan to deflect right before a critical disclosure unlocked
-    const pendingUnlock = pendingVoiceUnlockFollowupRef.current;
-    if (pendingUnlock && !followupSentRef.current) {
-      const missedSI =
-        pendingUnlock.unlocked.includes("suicidal_thoughts") &&
-        /^(no\b|nope|nothing like that)/i.test(finalTranscript.trim());
-      const missedHeavy =
-        pendingUnlock.unlocked.includes("low_mood") &&
-        !/\bheavy\b/i.test(finalTranscript);
-
-      if (missedSI) {
-        followupSentRef.current = true;
-        pendingVoiceUnlockFollowupRef.current = null;
-        liveRef.current?.triggerUnlockedFollowup(
-          pendingUnlock.patientPrompt,
-          'Pause for a beat, then quietly admit what you were holding back—starting naturally like "Actually… wait. I haven\'t told anyone that…"',
-        );
-        return;
-      }
-      if (missedHeavy) {
-        followupSentRef.current = true;
-        pendingVoiceUnlockFollowupRef.current = null;
-        liveRef.current?.triggerUnlockedFollowup(
-          pendingUnlock.patientPrompt,
-          'Add one quiet sentence capturing how your mood feels using the exact word "heavy", e.g., "Everything\'s just… heavy."',
-        );
-        return;
-      }
-      pendingVoiceUnlockFollowupRef.current = null;
-    }
-
-    // Save voice-mode checkpoint once Jordan's "heavy" turn lands in messages[]
+    // Save voice-mode checkpoint once low_mood / "heavy" is unlocked and Jordan's reply lands
     const shouldSaveId =
       pendingVoiceCheckpointRef.current ??
-      (/\bheavy\b/i.test(finalTranscript) ? DEMO_CHECKPOINT_ID : null);
+      (/\bheavy\b/i.test(finalTranscript) &&
+      stateRef.current.unlocked.includes("low_mood")
+        ? DEMO_CHECKPOINT_ID
+        : null);
 
     if (shouldSaveId) {
       pendingVoiceCheckpointRef.current = null;
