@@ -1,13 +1,13 @@
 // Pinned Gemini model names. Change ONLY here.
 // Verified 2026-11-07 against our API key (v1beta, via the SDK's models.list()).
 //
-// FREE TIER NOTE: "gemini-3.8-flash" allows only 20 requests/day, so we use Flash-Lite
-// for per-turn and debrief calls. Image models have 0 free quota.
+// FREE TIER NOTE: "gemini-3.8-flash" allows only 20 requests/day. Image models have 0 free quota.
 
 export const MODELS = {
-  // Per-turn classification (structured output). Also read by lib/classifier.ts.
-  classifier: "gemini-3.5-flash-lite",
-  // Cited debrief feedback. Stronger options when billing is on: "gemini-3.8-flash", "gemini-3.1-pro-preview".
+  // Per-turn classification & text-mode patient replies (Person A's choice). Read by lib/classifier.ts.
+  classifier: "gemini-3.5-flash",
+  // Cited debrief feedback (Person B): Flash-Lite to save free-tier quota; one call per finished run.
+  // Stronger options when billing is on: "gemini-3.5-flash", "gemini-3.1-pro-preview".
   debrief: "gemini-3.5-flash-lite",
   // Real-time patient voice (Live API, bidiGenerateContent)
   // Fallback: "gemini-2.5-flash-native-audio-latest"
