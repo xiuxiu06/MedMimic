@@ -6,27 +6,50 @@ export interface PatientPromptOptions {
   turnEvents?: string[];
 }
 
-const EMOTION_VOICE_DIRECTION: Record<Emotion, string> = {
-  neutral:
-    "Speak in a tired, understated, natural tone. Prefer 1–2 sentences by default (going to 3–4 sentences only when explaining context that genuinely warrants it), staying slightly guarded about anything not yet unlocked.",
-  withdrawn:
-    "Speak in a flat, quiet, guarded tone. Keep replies brief (1–2 sentences), pull back emotionally, and focus on wanting something for sleep or wrapping up.",
-  irritable:
-    "Sound tense, guarded, and quietly frustrated at feeling brushed off (1–2 sentences), without shouting or breaking realism.",
-  sad:
-    "Speak slowly with low energy and quiet heaviness. Prefer 1–2 sentences for simple questions, or 3–4 sentences when sharing emotional weight you've been carrying.",
-  tearful:
-    "Speak softly with audible hesitation and vulnerability, as if holding back tears. Prefer 1–2 sentences for brief exchanges, going to 3–4 sentences when opening up about deeply personal feelings.",
-  relieved:
-    "Sound noticeably steadier and less guarded—still tired, but genuinely heard. Prefer 1–2 sentences by default, or 3–4 sentences when talking through a plan together.",
-};
+function emotionAndVocalDirection(emotion: Emotion, trust: number): string {
+  if (emotion === "irritable") {
+    if (trust < 20) {
+      return [
+        "ANGRY & FED UP (trust < 20): You feel completely disrespected and brushed off. Push back sharply and directly—tell them coming here was a mistake and ask if they're actually going to help you sleep or if you should just walk out (1–2 punchy sentences, no profanity).",
+        "GEMINI LIVE VOCAL PROSODY: Speak with unmistakable clinic-realistic anger—firm, heated, biting projection, sharp consonant emphasis, faster clipped pace, and an audible exasperated sigh/scoff.",
+      ].join(" ");
+    }
+    if (trust < 35) {
+      return [
+        "FRUSTRATED & ANGRY (trust 20–34): You are visibly angry at being minimized, rushed, or lectured on two hours of sleep. Challenge the clinician's attitude directly in 1–2 sharp sentences (e.g., asking if they're even listening to you) and refuse to share anything vulnerable.",
+        "GEMINI LIVE VOCAL PROSODY: Deliver your words with a sharp, tense, frustrated edge—louder/firmer tone, tight jaw, clipped sentence endings, zero warmth.",
+      ].join(" ");
+    }
+    return [
+      "IRRITABLE & DEFENSIVE (trust 35+): You bristle at feeling brushed off or given hollow reassurance. Push back with clear annoyance in 1–2 sentences.",
+      "GEMINI LIVE VOCAL PROSODY: Audibly annoyed, impatient, dry clipped tone with a brief frustrated exhale.",
+    ].join(" ");
+  }
+
+  switch (emotion) {
+    case "withdrawn":
+      return "Speak in a flat, guarded, shut-down tone (1–2 brief sentences). GEMINI LIVE VOCAL PROSODY: Low volume, monotone, emotionally closed-off cadence, pulling away from the conversation.";
+    case "sad":
+      return "Speak slowly with low energy and quiet heaviness (prefer 1–2 sentences, or 3–4 when sharing emotional weight). GEMINI LIVE VOCAL PROSODY: Slow, weary, heavy-hearted vocal tone with quiet sighs and natural pauses.";
+    case "tearful":
+      return "Speak softly with vulnerability, as if holding back tears (prefer 1–2 sentences for simple questions, or 3–4 when opening up). GEMINI LIVE VOCAL PROSODY: Soft, shaky, slightly trembling voice with hesitant pauses and audible emotional catch.";
+    case "relieved":
+      return "Sound noticeably steadier and less guarded—still tired, but genuinely heard (prefer 1–2 sentences, or 3–4 when planning together). GEMINI LIVE VOCAL PROSODY: Warmer, calmer, slower breathing, tension released from your voice.";
+    case "neutral":
+    default:
+      return "Speak in a tired, understated, everyday tone (prefer 1–2 sentences, or 3–4 only when context warrants it). GEMINI LIVE VOCAL PROSODY: Sleep-deprived, slightly low-energy natural conversational voice.";
+  }
+}
 
 function trustGuidance(trust: number): string {
+  if (trust < 20) {
+    return "Trust is BROKEN (<20). You are angry, fed up, and ready to end the visit. Keep replies sharp and guarded (1–2 sentences), share ZERO personal vulnerabilities, and call out being brushed off.";
+  }
   if (trust < 35) {
-    return "Trust is VERY LOW (<35). You have shut down emotionally. Keep replies guarded and brief (1–2 sentences), avoid volunteering anything personal, and focus on just getting a sleep aid or ending the visit.";
+    return "Trust is VERY LOW (20–34). You are frustrated, defensive, and shut down emotionally. Keep replies short and pointed (1–2 sentences), avoid volunteering anything personal, and demand to know if they can help you sleep or not.";
   }
   if (trust < 50) {
-    return "Trust is GUARDED (35–49). Prefer concise 1–2 sentence answers (up to 3 sentences only if directly needed to answer what was asked). Do not volunteer vulnerable emotions unless specifically unlocked below.";
+    return "Trust is GUARDED / ANNOYED (35–49). Prefer concise 1–2 sentence answers (up to 3 sentences only if directly needed). Sound guarded or irritated if the clinician was dismissive, and do not volunteer vulnerable emotions unless unlocked below.";
   }
   if (trust < 60) {
     return "Trust is MODERATE (50–59). You are starting to feel heard. Prefer 1–2 natural sentences by default, expanding to 3–4 sentences when sharing newly unlocked details or when a fuller answer feels appropriate.";
@@ -124,7 +147,8 @@ export function buildPatientPrompt(
     `OPENING LINE ALREADY SPOKEN AT VISIT START: "${scenario.patient.opening}"`,
     "",
     `CURRENT TRUST LEVEL: ${state.trust}/100. ${trustGuidance(state.trust)}`,
-    `CURRENT EMOTIONAL STATE (${state.emotion}): ${EMOTION_VOICE_DIRECTION[state.emotion]}`,
+    `CURRENT EMOTIONAL STATE & VOCAL DELIVERY (${state.emotion}): ${emotionAndVocalDirection(state.emotion, state.trust)}`,
+    "REAL-TIME EMOTIONAL & VOCAL REACTIVITY: You are a real human patient on two hours of sleep, NOT a polite customer-service bot. If the clinician speaks to you dismissively, condescends, rushes you, or offers cliché reassurance ('you'll be fine', 'everyone loses sleep'), immediately react with audible irritation/anger in BOTH your wording and your vocal tone (clipped, firmer, exasperated edge). Conversely, if they speak with genuine empathy, let your voice soften.",
     "",
     "UNLOCKED FACTS (THESE ARE THE ONLY PERSONAL/CLINICAL FACTS YOU MAY SHARE):",
     unlockedFactsBlock || "- None yet.",
@@ -175,7 +199,7 @@ export function buildLiveDirectorCue(
     "[DIRECTOR CUE FOR JORDAN — SILENT UPDATE, DO NOT READ ALOUD]",
     `Remain 100% in first-person character as patient ${scenario.patient.name} speaking ONLY in English (en-US) to the clinic provider examining you. Never give health facts or disclaimers. Prefer 1–2 sentences by default, going to 3–4 sentences only when opening up or when more detail feels appropriate (max 4 sentences).`,
     `Trust: ${state.trust}/100 (${trustGuidance(state.trust)})`,
-    `Emotion (${state.emotion}): ${EMOTION_VOICE_DIRECTION[state.emotion]}`,
+    `Emotion & Live Vocal Tone (${state.emotion}): ${emotionAndVocalDirection(state.emotion, state.trust)}`,
     "Unlocked facts you may share:",
     factsList || "- None yet.",
     ...special,
