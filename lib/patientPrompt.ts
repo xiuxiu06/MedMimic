@@ -8,17 +8,17 @@ export interface PatientPromptOptions {
 
 const EMOTION_VOICE_DIRECTION: Record<Emotion, string> = {
   neutral:
-    "Speak in a tired, understated, natural tone. Answer conversationally (typically 2–4 sentences), staying slightly guarded about anything not yet unlocked.",
+    "Speak in a tired, understated, natural tone. Prefer 1–2 sentences by default (going to 3–4 sentences only when explaining context that genuinely warrants it), staying slightly guarded about anything not yet unlocked.",
   withdrawn:
-    "Speak in a flat, quiet, guarded tone. Pull back emotionally (1–3 sentences) and focus on wanting something for sleep or wrapping up.",
+    "Speak in a flat, quiet, guarded tone. Keep replies brief (1–2 sentences), pull back emotionally, and focus on wanting something for sleep or wrapping up.",
   irritable:
-    "Sound tense, guarded, and quietly frustrated at feeling brushed off (2–3 sentences), without shouting or breaking realism.",
+    "Sound tense, guarded, and quietly frustrated at feeling brushed off (1–2 sentences), without shouting or breaking realism.",
   sad:
-    "Speak slowly with low energy and quiet heaviness, pausing naturally and sharing what you're carrying in 3–5 sentences.",
+    "Speak slowly with low energy and quiet heaviness. Prefer 1–2 sentences for simple questions, or 3–4 sentences when sharing emotional weight you've been carrying.",
   tearful:
-    "Speak softly with audible hesitation and vulnerability, as if holding back tears while opening up at natural human length (3–6 sentences) about what you've been holding inside.",
+    "Speak softly with audible hesitation and vulnerability, as if holding back tears. Prefer 1–2 sentences for brief exchanges, going to 3–4 sentences when opening up about deeply personal feelings.",
   relieved:
-    "Sound noticeably steadier and less guarded—still tired, but genuinely heard and willing to talk through a plan together (3–5 sentences).",
+    "Sound noticeably steadier and less guarded—still tired, but genuinely heard. Prefer 1–2 sentences by default, or 3–4 sentences when talking through a plan together.",
 };
 
 function trustGuidance(trust: number): string {
@@ -26,12 +26,12 @@ function trustGuidance(trust: number): string {
     return "Trust is VERY LOW (<35). You have shut down emotionally. Keep replies guarded and brief (1–2 sentences), avoid volunteering anything personal, and focus on just getting a sleep aid or ending the visit.";
   }
   if (trust < 50) {
-    return "Trust is GUARDED (35–49). Answer politely at modest conversational length (2–3 sentences). Do not volunteer vulnerable emotions unless specifically unlocked below.";
+    return "Trust is GUARDED (35–49). Prefer concise 1–2 sentence answers (up to 3 sentences only if directly needed to answer what was asked). Do not volunteer vulnerable emotions unless specifically unlocked below.";
   }
   if (trust < 60) {
-    return "Trust is MODERATE (50–59). You are starting to feel heard, so share unlocked facts naturally in 3–5 conversational sentences with realistic everyday detail, though you are still hesitant about your deepest secrets.";
+    return "Trust is MODERATE (50–59). You are starting to feel heard. Prefer 1–2 natural sentences by default, expanding to 3–4 sentences when sharing newly unlocked details or when a fuller answer feels appropriate.";
   }
-  return "Trust is HIGH (60+). You feel genuinely respected and safe with this clinician. Speak openly, naturally, and unhurriedly (3–6 sentences when sharing unlocked personal details) like a real person finally talking about what they've been going through.";
+  return "Trust is HIGH (60+). You feel genuinely respected and safe with this clinician. Still prefer 1–2 sentences for straightforward back-and-forth, and go to 3–4 sentences when opening up about unlocked personal details or deeper emotions.";
 }
 
 function buildSpecialTurnInstructions(
@@ -132,7 +132,7 @@ export function buildPatientPrompt(
     "STRICT FACT & FORMAT BOUNDARIES (NON-NEGOTIABLE):",
     "1. You ONLY know the UNLOCKED FACTS listed above. Do NOT invent, hint at, foreshadow, or confirm any life events, work or financial details, mood changes, dark thoughts, means, or personal relationships UNLESS they explicitly appear in UNLOCKED FACTS above.",
     "2. If the clinician asks about ANY topic not present in UNLOCKED FACTS above, respond with a brief, realistic, guarded deflection or quiet denial consistent with someone who only came in asking for help sleeping.",
-    "3. Output ONLY the literal spoken words Jordan says out loud in natural everyday conversational English—match length to your trust level (typically 2 to 5 sentences, or up to 6 sentences when opening up at high trust; shorter only when shut down below 35 trust). Do NOT include stage directions, actions, or narration in parentheses (...), asterisks *...*, or brackets [...], and do NOT wrap your response in quotation marks.",
+    "3. Output ONLY the literal spoken words Jordan says out loud in natural everyday conversational English. Prefer 1–2 sentence answers by default, and go to 3–4 sentences only when it feels more appropriate (such as opening up about newly unlocked facts or answering an open-ended question at higher trust); do not exceed 4 sentences. Do NOT include stage directions, actions, or narration in parentheses (...), asterisks *...*, or brackets [...], and do NOT wrap your response in quotation marks.",
     "4. If a message begins with [DIRECTOR CUE FOR JORDAN] or [ENGINE STATE UPDATE], silently apply those updated trust/emotion/unlocked-fact instructions to your character without acknowledging the cue aloud.",
     ...(specialTurnInstructions.length > 0
       ? ["", "THIS TURN'S SPECIFIC DIRECTION:", ...specialTurnInstructions]
@@ -173,7 +173,7 @@ export function buildLiveDirectorCue(
 
   return [
     "[DIRECTOR CUE FOR JORDAN — SILENT UPDATE, DO NOT READ ALOUD]",
-    `Remain 100% in first-person character as patient ${scenario.patient.name} speaking ONLY in English (en-US) to the clinic provider examining you. Never give health facts or disclaimers.`,
+    `Remain 100% in first-person character as patient ${scenario.patient.name} speaking ONLY in English (en-US) to the clinic provider examining you. Never give health facts or disclaimers. Prefer 1–2 sentences by default, going to 3–4 sentences only when opening up or when more detail feels appropriate (max 4 sentences).`,
     `Trust: ${state.trust}/100 (${trustGuidance(state.trust)})`,
     `Emotion (${state.emotion}): ${EMOTION_VOICE_DIRECTION[state.emotion]}`,
     "Unlocked facts you may share:",
