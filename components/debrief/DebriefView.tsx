@@ -1,5 +1,6 @@
 import Link from "next/link";
-import type { Branch, Citation, Debrief, FeedbackItem, TimelineEvent } from "@/lib/types";
+import type { Branch, Debrief, FeedbackItem, TimelineEvent } from "@/lib/types";
+import { CitationTag } from "./CitationTag";
 import { CRITERION_TEXT, eventText, formatTime, POSITIVE_EVENTS } from "@/lib/labels";
 
 export type OutcomeTone = "bad" | "warn" | "ok";
@@ -172,16 +173,6 @@ export function RubricScores({ scores }: { scores: Debrief["scores"] }) {
   );
 }
 
-export function CitationTag({ c }: { c: Citation }) {
-  const text = c.section ? `${c.source} · ${c.section}` : c.source;
-  // TODO (Stage 3): open a popover with the retrieved passage from data/guidelines.json.
-  return (
-    <span title={c.url ?? c.sourceId} className="rounded-full bg-cite-bg px-2.5 py-1 text-xs font-semibold text-cite">
-      {text}
-    </span>
-  );
-}
-
 const FEEDBACK_HEAD: Record<FeedbackItem["kind"], { label: string; className: string }> = {
   communication: { label: "Communication", className: "text-warn" },
   missed: { label: "Missed step", className: "text-bad" },
@@ -194,7 +185,7 @@ export function FeedbackList({ items, timeline }: { items: FeedbackItem[]; timel
     <section aria-label="Feedback with evidence" className="flex min-w-0 flex-[999_1_480px] flex-col gap-4 rounded-[20px] border border-line bg-panel px-6 py-6 sm:px-7">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="text-[13px] font-semibold tracking-widest text-muted">FEEDBACK WITH EVIDENCE</h2>
-        <span className="text-xs text-cite">Grounded in MedMimic guideline library</span>
+        <span className="text-xs text-cite">Tap a source to read the passage</span>
       </div>
       {items.map((f, i) => {
         const head = FEEDBACK_HEAD[f.kind];

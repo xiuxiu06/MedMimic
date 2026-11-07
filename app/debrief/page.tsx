@@ -13,8 +13,19 @@ import type { Branch } from "@/lib/types";
 
 const CACHE_PREFIX = "medmimic:debrief:";
 
+/**
+ * Cache key = run id + a hash of the run's content. Run ids are reused
+ * ("Reset Demo" starts again at run-1), so the id alone would serve a stale debrief.
+ */
+function cacheKey(branch: Branch): string {
+  const content = JSON.stringify([branch.timeline, branch.finalState]);
+  let h = 5381;
+  for (let i = 0; i < content.length; i++) h = ((h << 5) + h + content.charCodeAt(i)) | 0;
+  return `${CACHE_PREFIX}${branch.id}:${(h >>> 0).toString(36)}`;
+}
+
 async function fetchDebrief(branch: Branch): Promise<DebriefResponse> {
-  const key = `${CACHE_PREFIX}${branch.id}`;
+  const key = cacheKey(branch);
   try {
     const cached = window.sessionStorage.getItem(key);
     if (cached) return JSON.parse(cached) as DebriefResponse;

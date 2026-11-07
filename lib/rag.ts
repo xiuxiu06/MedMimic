@@ -15,7 +15,32 @@ export interface GuidelineChunk {
   section: string;
   text: string;
   url?: string;
+  license?: string;
+  attribution?: string;
   embedding: number[];
+}
+
+/** Public view of a passage (no embedding) for the citation popover. */
+export interface PassageView {
+  id: string;
+  source: string;
+  sourceShort: string;
+  section: string;
+  text: string;
+  url?: string;
+  attribution?: string;
+}
+
+export function toPassageView(c: GuidelineChunk): PassageView {
+  return {
+    id: c.id,
+    source: c.source,
+    sourceShort: SOURCE_SHORT[c.sourceId] ?? c.source,
+    section: c.section,
+    text: c.text,
+    url: c.url,
+    attribution: c.attribution,
+  };
 }
 
 const LIB = library as { model: string; dims: number; chunks: GuidelineChunk[] };
