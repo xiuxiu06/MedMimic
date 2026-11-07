@@ -2,11 +2,11 @@
 // Verified 2026-11-07 against our API key (v1beta, via the SDK's models.list()).
 
 export const MODELS = {
-  // Fast model for per-turn classification (structured output)
-  classifier: "gemini-3.8-flash",
+  // Fast model for per-turn classification & text-mode patient replies (structured output)
+  classifier: "gemini-3.5-flash",
   // Model for the cited debrief.
   // "gemini-3.1-pro-preview" is stronger but returns 429 (no free-tier quota) — switch if billing is enabled.
-  debrief: "gemini-3.8-flash",
+  debrief: "gemini-3.5-flash",
   // Real-time patient voice (Live API, bidiGenerateContent)
   // Fallback: "gemini-2.5-flash-native-audio-latest"
   live: "gemini-3.8-live",

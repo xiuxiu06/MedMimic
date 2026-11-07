@@ -29,9 +29,9 @@ export const DISCLOSURE_LABELS: Record<string, string> = {
 };
 
 export const ENGINE_EVENTS = {
-  SHUTDOWN: "patient_shuts_down",
-  ASKS_TO_LEAVE: "patient_asks_to_leave",
-  OPENS_UP: "patient_opens_up",
+  SHUTDOWN: "shutdown",
+  ASKS_TO_LEAVE: "wants_to_leave",
+  OPENS_UP: "opens_up",
   SI_DENIED_LOW_TRUST: "si_denied_low_trust",
 } as const;
 
@@ -315,6 +315,7 @@ export function applyStudentTurn({
       t: nextElapsedSec,
       kind: "checkpoint",
       label: DEMO_CHECKPOINT_ID,
+      quote: "Everything's just… heavy.",
     });
     shouldSaveCheckpoint = {
       id: DEMO_CHECKPOINT_ID,

@@ -11,6 +11,7 @@ import {
   useState,
 } from "react";
 import { createCheckpoint, finalizeBranch } from "../../lib/checkpoints";
+import { AppHeader } from "../../components/AppHeader";
 import {
   applyStudentAction,
   createInitialEngineState,
@@ -125,6 +126,7 @@ interface TurnApiResponse {
   messages: Message[];
   patientReply?: string;
   patientPrompt: string;
+  liveDirectorCue?: string;
   shouldSaveCheckpoint?: { id: string; reason: string };
   checkpoint?: Checkpoint;
   outcome: EncounterOutcome;
@@ -355,7 +357,8 @@ function EncounterWorkspace() {
         pendingVoiceCheckpointRef.current = data.shouldSaveCheckpoint.id;
       }
 
-      liveRef.current?.injectEngineStatePrompt(data.patientPrompt);
+      const cue = data.liveDirectorCue ?? data.patientPrompt;
+      liveRef.current?.injectEngineStatePrompt(cue);
 
       if (
         data.newlyUnlocked.includes("suicidal_thoughts") ||
@@ -364,7 +367,7 @@ function EncounterWorkspace() {
       ) {
         pendingVoiceUnlockFollowupRef.current = {
           unlocked: data.newlyUnlocked,
-          patientPrompt: data.patientPrompt,
+          patientPrompt: cue,
         };
         followupSentRef.current = false;
       }
@@ -503,7 +506,7 @@ function EncounterWorkspace() {
             pendingVoiceCheckpointRef.current = data.shouldSaveCheckpoint.id;
           }
           const sentToLive = live.sendTextForVoiceReply(
-            data.patientPrompt,
+            data.liveDirectorCue ?? data.patientPrompt,
             text,
           );
           if (!sentToLive) {
@@ -700,30 +703,20 @@ function EncounterWorkspace() {
   const checkpointMsgCount = primaryCheckpoint?.messages.length;
 
   return (
-    <div className="flex min-h-screen flex-col bg-[#0B1220] text-[#E6EDF7]">
-      {/* Top Clinical Workstation Header */}
-      <header className="sticky top-0 z-30 border-b border-white/10 bg-[#0B1220]/95 backdrop-blur-md">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-3">
-          <div className="flex items-center gap-3">
-            <Link
-              href="/briefing"
-              className="text-lg font-bold tracking-tight text-[#E6EDF7] hover:text-sky-300 transition-colors"
-            >
-              MedMimic
-            </Link>
-            <span className="hidden sm:inline-flex items-center rounded-full border border-amber-400/30 bg-amber-950/40 px-2.5 py-0.5 text-[11px] font-medium text-amber-200">
-              For education only · Not for clinical decision-making
-            </span>
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-[#131E35] px-2.5 py-0.5 text-xs font-mono text-[#9AA8BF]">
+    <div className="flex min-h-screen flex-col bg-ink text-fg">
+      {/* Shared MedMimic Step Header + Encounter Controls */}
+      <AppHeader
+        active="encounter"
+        right={
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-[#131E35] px-2.5 py-1 text-xs font-mono text-[#9AA8BF]">
               <span>{branchId.toUpperCase()}</span>
               {parentCheckpoint && (
                 <span className="text-sky-300">· Rewound</span>
               )}
               <span>· {formatDuration(engineState.elapsedSec)}</span>
             </span>
-          </div>
 
-          <div className="flex flex-wrap items-center gap-2">
             {/* Gemini Live Voice Toggle */}
             {live.status === "connected" ? (
               <button
@@ -775,13 +768,13 @@ function EncounterWorkspace() {
             <button
               type="button"
               onClick={handleEndEncounter}
-              className="rounded-lg bg-sky-500 px-3.5 py-1.5 text-xs font-semibold text-slate-950 hover:bg-sky-400 transition-colors cursor-pointer"
+              className="rounded-lg bg-ok px-3.5 py-1.5 text-xs font-bold text-[#062012] hover:brightness-110 transition-all cursor-pointer"
             >
               End Encounter →
             </button>
           </div>
-        </div>
-      </header>
+        }
+      />
 
       {/* Main 3-Column Clinical Workspace */}
       <main className="mx-auto grid w-full max-w-7xl flex-1 grid-cols-1 gap-4 p-4 lg:grid-cols-12">

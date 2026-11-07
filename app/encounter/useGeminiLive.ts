@@ -2,6 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { GoogleGenAI, Modality, type LiveServerMessage } from "@google/genai";
+import { JORDAN_SCENARIO } from "../../lib/engine";
+import {
+  isOutOfCharacterOrNonEnglish,
+  sanitizePatientReply,
+} from "../../lib/patientPrompt";
 import type { EngineState, Message } from "../../lib/types";
 
 export type LiveConnectionStatus =
@@ -37,8 +42,16 @@ function float32ToBase64Pcm16(
     const outLength = Math.max(1, Math.round(input.length / ratio));
     const resampled = new Float32Array(outLength);
     for (let i = 0; i < outLength; i++) {
-      const idx = Math.min(input.length - 1, Math.floor(i * ratio));
-      resampled[i] = input[idx];
+      const start = Math.floor(i * ratio);
+      const end = Math.min(
+        input.length,
+        Math.max(start + 1, Math.floor((i + 1) * ratio)),
+      );
+      let sum = 0;
+      for (let j = start; j < end; j++) {
+        sum += input[j];
+      }
+      resampled[i] = sum / (end - start);
     }
     samples = resampled;
   }
@@ -88,6 +101,7 @@ export function useGeminiLive(callbacks: UseGeminiLiveCallbacks) {
   const studentTranscriptBufRef = useRef<string>("");
   const patientTranscriptBufRef = useRef<string>("");
   const studentTurnDispatchedRef = useRef<boolean>(false);
+  const recoveryAttemptedRef = useRef<boolean>(false);
 
   const stopMeter = useCallback(() => {
     if (meterFrameRef.current !== null) {
@@ -286,7 +300,12 @@ export function useGeminiLive(callbacks: UseGeminiLiveCallbacks) {
           model: data.model,
           config: {
             responseModalities: [Modality.AUDIO],
-            inputAudioTranscription: {},
+            speechConfig: {
+              languageCode: "en-US",
+            },
+            inputAudioTranscription: {
+              languageCodes: ["en-US"],
+            },
             outputAudioTranscription: {},
             systemInstruction: {
               parts: [{ text: data.systemInstruction ?? "" }],
@@ -304,9 +323,10 @@ export function useGeminiLive(callbacks: UseGeminiLiveCallbacks) {
                 clearPlaybackQueue();
               }
 
-              // Accumulate spoken student transcript
+              // Accumulate spoken student transcript (English-only ASR configured above)
               if (sc.inputTranscription?.text) {
                 studentTurnDispatchedRef.current = false;
+                recoveryAttemptedRef.current = false;
                 studentTranscriptBufRef.current += sc.inputTranscription.text;
                 setLiveInputPreview(studentTranscriptBufRef.current.trim());
               }
@@ -326,6 +346,39 @@ export function useGeminiLive(callbacks: UseGeminiLiveCallbacks) {
               if (sc.outputTranscription?.text) {
                 flushStudentTranscriptIfNeeded();
                 patientTranscriptBufRef.current += sc.outputTranscription.text;
+
+                // Circuit breaker: immediately abort & self-correct if the Live model ever
+                // slips into a medical-advice disclaimer or Spanish output
+                if (
+                  isOutOfCharacterOrNonEnglish(patientTranscriptBufRef.current)
+                ) {
+                  clearPlaybackQueue();
+                  patientTranscriptBufRef.current = "";
+                  callbacksRef.current.onPatientTranscriptUpdate?.("");
+
+                  if (!recoveryAttemptedRef.current && sessionRef.current) {
+                    recoveryAttemptedRef.current = true;
+                    try {
+                      sessionRef.current.sendClientContent({
+                        turns: [
+                          {
+                            role: "user",
+                            parts: [
+                              {
+                                text: "[DIRECTOR CUE FOR JORDAN — SILENT CORRECTION: Do NOT give disclaimers, health facts, or speak Spanish. Reply right now in 2–4 natural conversational sentences strictly in English (en-US) in first person ('I') as exhausted clinic patient Jordan Lee responding to the clinician.]",
+                              },
+                            ],
+                          },
+                        ],
+                        turnComplete: true,
+                      });
+                    } catch {
+                      // Ignore if socket closed
+                    }
+                  }
+                  return;
+                }
+
                 callbacksRef.current.onPatientTranscriptUpdate?.(
                   patientTranscriptBufRef.current.trim(),
                 );
@@ -333,9 +386,15 @@ export function useGeminiLive(callbacks: UseGeminiLiveCallbacks) {
 
               if (sc.turnComplete) {
                 flushStudentTranscriptIfNeeded();
-                const finalPatient = patientTranscriptBufRef.current.trim();
+                const finalPatient = sanitizePatientReply(
+                  patientTranscriptBufRef.current,
+                );
                 patientTranscriptBufRef.current = "";
-                if (finalPatient) {
+                if (
+                  finalPatient &&
+                  !isOutOfCharacterOrNonEnglish(finalPatient)
+                ) {
+                  recoveryAttemptedRef.current = false;
                   callbacksRef.current.onPatientTurnComplete?.(finalPatient);
                 }
               }
@@ -354,16 +413,39 @@ export function useGeminiLive(callbacks: UseGeminiLiveCallbacks) {
 
         sessionRef.current = session;
 
-        // Seed conversation history (e.g., when opening a fresh Live session after Rewind!)
-        if (seedMessages.length > 0) {
-          session.sendClientContent({
-            turns: seedMessages.map((m) => ({
-              role: m.role === "student" ? "user" : "model",
-              parts: [{ text: m.text }],
-            })),
-            turnComplete: false,
+        // Seed conversation history starting with an explicit clinician user turn
+        // so the Live model never confuses who is the clinician (user) vs patient (model).
+        const effectiveSeed =
+          seedMessages.length > 0
+            ? seedMessages
+            : [
+                {
+                  role: "patient" as const,
+                  text: JORDAN_SCENARIO.patient.opening,
+                  t: 0,
+                },
+              ];
+
+        const turnsToSeed = effectiveSeed.map((m) => ({
+          role: m.role === "student" ? "user" : "model",
+          parts: [{ text: m.text }],
+        }));
+
+        if (turnsToSeed[0]?.role === "model") {
+          turnsToSeed.unshift({
+            role: "user",
+            parts: [
+              {
+                text: "Hi Jordan, thanks for coming into the clinic today. What brings you in?",
+              },
+            ],
           });
         }
+
+        session.sendClientContent({
+          turns: turnsToSeed,
+          turnComplete: false,
+        });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         setError(msg);
@@ -441,7 +523,7 @@ export function useGeminiLive(callbacks: UseGeminiLiveCallbacks) {
   /**
    * Injects updated engine state & unlocked disclosures mid-session without triggering a turn.
    */
-  const injectEngineStatePrompt = useCallback((patientPrompt: string) => {
+  const injectEngineStatePrompt = useCallback((directorCue: string) => {
     if (!sessionRef.current) return;
     try {
       sessionRef.current.sendClientContent({
@@ -450,7 +532,7 @@ export function useGeminiLive(callbacks: UseGeminiLiveCallbacks) {
             role: "user",
             parts: [
               {
-                text: `[ENGINE STATE UPDATE]\n${patientPrompt}`,
+                text: directorCue,
               },
             ],
           },
@@ -467,11 +549,12 @@ export function useGeminiLive(callbacks: UseGeminiLiveCallbacks) {
    * is active) after injecting the updated engine prompt so Jordan speaks the reply in native audio!
    */
   const sendTextForVoiceReply = useCallback(
-    (patientPrompt: string, studentText: string) => {
+    (directorCue: string, studentText: string) => {
       if (!sessionRef.current) return false;
       try {
         // Prevent inputTranscription callback from re-triggering duplicate classification
         studentTurnDispatchedRef.current = true;
+        recoveryAttemptedRef.current = false;
         studentTranscriptBufRef.current = "";
         patientTranscriptBufRef.current = "";
 
@@ -479,7 +562,7 @@ export function useGeminiLive(callbacks: UseGeminiLiveCallbacks) {
           turns: [
             {
               role: "user",
-              parts: [{ text: `[ENGINE STATE UPDATE]\n${patientPrompt}` }],
+              parts: [{ text: directorCue }],
             },
           ],
           turnComplete: false,
@@ -498,17 +581,18 @@ export function useGeminiLive(callbacks: UseGeminiLiveCallbacks) {
    * started a guarded reply: prompts Jordan to naturally add what they held back.
    */
   const triggerUnlockedFollowup = useCallback(
-    (patientPrompt: string, direction: string) => {
+    (directorCue: string, direction: string) => {
       if (!sessionRef.current) return false;
       try {
         patientTranscriptBufRef.current = "";
+        recoveryAttemptedRef.current = false;
         sessionRef.current.sendClientContent({
           turns: [
             {
               role: "user",
               parts: [
                 {
-                  text: `[ENGINE STATE UPDATE]\n${patientPrompt}\n[DIRECTION: ${direction}]`,
+                  text: `${directorCue}\n[DIRECTION: ${direction}]`,
                 },
               ],
             },
