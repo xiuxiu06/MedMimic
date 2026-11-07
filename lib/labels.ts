@@ -16,7 +16,11 @@ const EVENT_TEXT: Record<string, string> = {
   dismissive: "Dismissive response",
   closed_rapid: "Rapid closed questions",
   other: "Other",
-  // engine events (lib/engine.ts ENGINE_EVENTS)
+  // engine events (lib/engine.ts ENGINE_EVENTS). Both id sets are accepted because
+  // the engine has used each at different times.
+  shutdown: "Patient shut down",
+  wants_to_leave: "Event: wants to leave",
+  opens_up: "Patient opened up",
   patient_shuts_down: "Patient shut down",
   patient_asks_to_leave: "Event: wants to leave",
   patient_opens_up: "Patient opened up",
@@ -34,6 +38,9 @@ const EVENT_TEXT: Record<string, string> = {
   "missed:asked_plan": "Never asked about a plan",
   "missed:asked_support": "Never asked about support",
 };
+
+/** Positive engine events (shown green in the timeline). */
+export const POSITIVE_EVENTS = new Set(["opens_up", "patient_opens_up"]);
 
 export function eventText(label: string): string {
   return EVENT_TEXT[label] ?? label.replace(/[_:]/g, " ");

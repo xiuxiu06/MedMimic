@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { Branch, Citation, Debrief, FeedbackItem, TimelineEvent } from "@/lib/types";
-import { CRITERION_TEXT, eventText, formatTime } from "@/lib/labels";
+import { CRITERION_TEXT, eventText, formatTime, POSITIVE_EVENTS } from "@/lib/labels";
 
 export type OutcomeTone = "bad" | "warn" | "ok";
 
@@ -67,7 +67,7 @@ function markerFor(e: TimelineEvent) {
   const color =
     e.kind === "action" && e.label === "sleep_aid"
       ? "bg-bad"
-      : e.kind === "event" && e.label !== "patient_opens_up"
+      : e.kind === "event" && !POSITIVE_EVENTS.has(e.label)
         ? "bg-warn"
         : (e.trustDelta ?? 0) < 0
           ? "bg-warn"
