@@ -10,10 +10,12 @@ export const MODELS = {
   // Real-time patient voice (Live API, bidiGenerateContent)
   // Fallback: "gemini-2.5-flash-native-audio-latest"
   live: "gemini-3.8-live",
-  // Guideline library embeddings (newer option: "gemini-embedding-2")
+  // Guideline library embeddings, 768 dims (see scripts/embed-guidelines.mts). Changing the
+  // model or dims requires re-running the embed script. Newer option: "gemini-embedding-2".
   embedding: "gemini-embedding-001",
-  // Patient portraits (faster/cheaper option: "gemini-3.1-flash-image")
-  image: "gemini-3-pro-image",
+  // Patient portraits. ⚠ ALL image models have 0 quota on the free tier (429) — needs billing.
+  // Higher quality option: "gemini-3-pro-image"
+  image: "gemini-3.1-flash-image",
   // Voice fallback if Live fails: text → speech
   tts: "gemini-3.8-flash-tts",
 } as const;
