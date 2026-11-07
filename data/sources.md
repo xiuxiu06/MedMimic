@@ -1,14 +1,24 @@
 # Guideline library sources
 
-Fill in before chunking/embedding. Only use sources whose license allows this use.
+Checked 2026-11-07. `done` means selected English excerpts and reuse terms have been checked and saved in `data/raw/`; it does not mean the library has been embedded or clinically validated. `pending-permission` sources have no ingestible raw file.
 
 | id | Source | URL | License / terms | Status |
 |---|---|---|---|---|
-| cssrs | Columbia Suicide Severity Rating Scale (screener) | | | todo |
-| safet | SAMHSA SAFE-T | | | todo |
-| phq9 | PHQ-9 | | | todo |
-| stanley-brown | Stanley-Brown Safety Plan | | | todo |
-| oars | Motivational Interviewing — OARS | | | todo |
-| mhgap | WHO mhGAP Intervention Guide | | | todo |
+| cssrs | Columbia Suicide Severity Rating Scale — Outpatient/Ambulatory, 2026 download | [Official screener](https://cssrs.columbia.edu/wp-content/uploads/C-SSRS-Screener-with-Triage-Points-for-outpatientambulatory-2026.pdf) | [Columbia permission statement](https://cssrs.columbia.edu/the-columbia-scale-c-ssrs/cssrs-for-communities-and-healthcare/): no special permission to use the tools in your setting, customize triage, or embed in EHRs. Not labeled public domain or CC. | done |
+| safet | SAMHSA SAFE-T — updated 2024, PEP24-01-036 | [Official flier](https://library.samhsa.gov/sites/default/files/safet-flyer-pep24-01-036.pdf) | [SAMHSA reuse terms](https://www.samhsa.gov/about/faqs): public-domain material; no reproduction/distribution for a fee without written authorization; no implied endorsement. | done |
+| phq9 | PHQ-9 — English-US original and instruction manual | [Official form](https://www.phqscreeners.com/images/sites/g/files/g10060481/f/201412/PHQ-9_AU1.0_English-US%20original.pdf); [manual](https://www.phqscreeners.com/images/sites/g/files/g10016261/f/201412/instructions.pdf) | [Official reuse statement](https://www.phqscreeners.com/select-screener) permits reproduction, translation, display and distribution. Manual p. 8 identifies measures as public domain. Pfizer attribution retained. | done |
+| stanley-brown | Stanley-Brown Safety Plan | [Official forms and permissions](https://suicidesafetyplan.com/forms/) | Written permission required to reproduce/program the form in a digital application or website, including nonprofit use; also required for translations/adaptations. No permission on file; no raw content copied. | pending-permission |
+| oars | Motivational Interviewing — OARS, SAMHSA TIP 35, updated 2019, Chapter 3 | [Official chapter on NCBI Bookshelf](https://www.ncbi.nlm.nih.gov/sites/books/NBK571068/) | [Publication-specific Public Domain Notice](https://www.ncbi.nlm.nih.gov/sites/books/NBK571062/): excludes material taken directly from copyrighted sources; no reproduction/distribution for a fee without written authorization. Only narrative excerpts selected; third-party exhibits and quotation blocks excluded. | done |
+| mhgap | WHO mhGAP Intervention Guide — English version 2.0, 2016, ISBN 9789241549790 | [Official publication](https://www.who.int/publications/i/item/9789241549790); [English PDF](https://iris.who.int/server/api/core/bitstreams/6ded7ffd-9d69-493a-b48a-0b3e6250c173/content) | Exact English PDF, copyright page (PDF p. 2): © WHO 2016, "All rights reserved"; requests permission for reproduction/translation, including noncommercial distribution. Do not infer a CC license from later editions, translations, or [general WHO policy](https://www.who.int/about/policies/publishing/copyright). No raw content copied. | pending-permission |
+
+## Collection notes
+
+- Raw files: `cssrs.md` (2 chunks), `safet.md` (4), `phq9.md` (3), `oars.md` (4). Each `##` is one retrieval chunk. Metadata contains attribution, permission evidence, and extraction notes.
+- English wording, clinical questions, timeframes, routing, and author-year citations are retained. Only line wrapping, bullet markers, response-column layout, and quotation glyphs are normalized. Section headings are editorial retrieval labels, with original page/section references where applicable.
+- The SAFE-T excerpts were checked against indexed text from the official SAMHSA PDF; direct download returned HTTP 403. Its illustrative risk-level table is not included. SAFE-T covers safety planning and lethal-means counseling without reproducing the restricted Stanley-Brown form.
+- PHQ-9 scoring refers to the instruction manual. Its worked example is not Jordan's score. OARS is communication guidance from a substance-use treatment manual; it does not establish psychiatric disclosure thresholds or suicide-risk scoring.
+- A few short sections stay below 100 words to preserve complete source sections without padding or mixing topics. No generated clinical prose is included in raw chunk bodies.
+- Raw filenames are source IDs, not final chunk IDs. Existing mock citation IDs are placeholders and must be reconciled with the future embedding script; these sources do not validate the mock feedback automatically.
+- Only `done` sources are ready for ingestion. Do not charge for redistribution of SAMHSA publications or imply publisher endorsement. Recheck reuse terms before commercial distribution.
 
 ❌ Do not use DSM-5-TR (copyrighted).
