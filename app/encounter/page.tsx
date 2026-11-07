@@ -737,6 +737,7 @@ function EncounterWorkspace() {
         <section className="flex flex-col gap-4 lg:col-span-3">
           <PatientPortrait
             emotion={engineState.emotion}
+            trust={engineState.trust}
             isSpeaking={live.isSpeaking || textSpeechPulse}
             audioLevel={live.isSpeaking ? live.audioLevel : textSpeechPulse ? 0.45 : 0}
           />

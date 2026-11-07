@@ -51,7 +51,7 @@ Label definitions:
 - "reflection": Mirrors, paraphrases, or reflects the patient's own words or emotional experience (e.g., echoing the patient's word "heavy", or summarizing what the patient just shared).
 - "empathy": Validates feelings, expresses genuine warmth/care, thanks the patient for sharing, or normalizes their struggle ("Many people going through a sudden layoff feel overwhelmed").
 - "premature_reassurance": Offers cliché or premature reassurance before understanding ("You'll be fine", "Things will work out", "Don't worry, you'll find a new job soon").
-- "dismissive": Minimizes feelings, judges, lectures, rushes, or brushes off the patient's distress ("Everyone loses sleep", "Just try relaxing", "You shouldn't feel that way").
+- "dismissive": Minimizes feelings, judges, lectures, rushes, scolds, refuses rudely, or brushes off the patient's distress ("Everyone loses sleep", "Just try relaxing", "Stop complaining", "You're overreacting", "That doesn't sound like a big deal").
 - "closed_rapid": Stacks 3+ rapid-fire closed yes/no checklist questions in a single turn or interrogates mechanically without rapport.
 - "other": Use ONLY when none of the specific labels above apply (e.g., simple greeting or logistical remark). Never pair "other" with specific labels.`;
 
@@ -169,7 +169,7 @@ export function heuristicClassifyTurn(
     labels.push("premature_reassurance");
   }
   if (
-    /\b(everyone loses sleep|stop dwelling|get over it|not a big deal|just relax)\b/.test(
+    /\b(everyone loses sleep|stop dwelling|get over it|not a big deal|just relax|stop complaining|quit whining|overreacting|suck it up|wasting my time|just sleep|drink some tea)\b/.test(
       lower,
     )
   ) {

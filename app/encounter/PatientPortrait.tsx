@@ -6,6 +6,7 @@ import type { Emotion } from "../../lib/types";
 
 export interface PatientPortraitProps {
   emotion: Emotion;
+  trust?: number;
   isSpeaking: boolean;
   audioLevel: number; // 0..1 normalized amplitude from Live audio or text speech pulse
 }
@@ -66,13 +67,24 @@ const PORTRAIT_META: Record<
 
 export function PatientPortrait({
   emotion,
+  trust = 50,
   isSpeaking,
   audioLevel,
 }: PatientPortraitProps) {
   const [missingSlugs, setMissingSlugs] = useState<Record<string, boolean>>({});
-  const meta = PORTRAIT_META[emotion] ?? PORTRAIT_META.neutral;
+  const baseMeta = PORTRAIT_META[emotion] ?? PORTRAIT_META.neutral;
+  const dynamicLabel =
+    emotion === "irritable"
+      ? trust < 20
+        ? "Angry · Fed Up"
+        : trust < 35
+          ? "Angry · Frustrated"
+          : "Irritable · Defensive"
+      : baseMeta.label;
+  const meta = { ...baseMeta, label: dynamicLabel };
   const imgSrc = `/portraits/${meta.fileSlug}.png`;
   const useFallbackSvg = Boolean(missingSlugs[meta.fileSlug]);
+  const isAngry = emotion === "irritable";
 
   const effectivePulse = isSpeaking ? Math.max(0.28, Math.min(1, audioLevel)) : 0;
 
@@ -85,7 +97,9 @@ export function PatientPortrait({
       {/* Subtle speaking aura */}
       {isSpeaking && (
         <div
-          className="pointer-events-none absolute inset-0 rounded-2xl bg-sky-400/5 transition-opacity duration-150"
+          className={`pointer-events-none absolute inset-0 rounded-2xl ${
+            isAngry ? "bg-rose-500/10" : "bg-sky-400/5"
+          } transition-opacity duration-150`}
           style={{ opacity: 0.25 + effectivePulse * 0.55 }}
         />
       )}
@@ -118,7 +132,11 @@ export function PatientPortrait({
 
         {/* Voice waveform bars overlay when Jordan is speaking */}
         {isSpeaking && (
-          <div className="absolute bottom-2.5 right-2.5 flex items-end gap-0.5 rounded-full bg-[#0B1220]/85 px-2.5 py-1 backdrop-blur-sm border border-sky-400/30">
+          <div
+            className={`absolute bottom-2.5 right-2.5 flex items-end gap-0.5 rounded-full bg-[#0B1220]/85 px-2.5 py-1 backdrop-blur-sm border ${
+              isAngry ? "border-rose-400/40" : "border-sky-400/30"
+            }`}
+          >
             {[0.55, 1, 0.75, 0.9, 0.5].map((mult, idx) => {
               const barHeight = Math.max(
                 4,
@@ -127,7 +145,9 @@ export function PatientPortrait({
               return (
                 <span
                   key={idx}
-                  className="w-1 rounded-full bg-sky-400 transition-all duration-75"
+                  className={`w-1 rounded-full ${
+                    isAngry ? "bg-rose-400" : "bg-sky-400"
+                  } transition-all duration-75`}
                   style={{ height: `${barHeight}px` }}
                 />
               );

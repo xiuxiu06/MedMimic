@@ -142,16 +142,28 @@ export function deriveEmotion(
   actions: readonly ActionId[],
   turnLabels: ReadonlySet<TurnLabel>,
   newlyUnlocked: ReadonlySet<string>,
+  prevEmotion?: Emotion,
 ): Emotion {
-  if (trust < SHUTDOWN_TRUST_THRESHOLD) {
-    return turnLabels.has("dismissive") ? "irritable" : "withdrawn";
+  const hasWarmth =
+    turnLabels.has("empathy") || turnLabels.has("reflection");
+  const hasInvalidation =
+    turnLabels.has("dismissive") ||
+    turnLabels.has("premature_reassurance") ||
+    turnLabels.has("closed_rapid");
+
+  if (turnLabels.has("dismissive") && trust < 65) {
+    return "irritable";
   }
 
   if (
-    turnLabels.has("dismissive") ||
-    turnLabels.has("premature_reassurance") ||
-    trust < 42
+    (trust <= 42 && hasInvalidation) ||
+    (trust <= 30 && !hasWarmth) ||
+    (trust < 38 && prevEmotion === "irritable" && !hasWarmth)
   ) {
+    return "irritable";
+  }
+
+  if (trust < 44 || turnLabels.has("premature_reassurance")) {
     return "withdrawn";
   }
 
@@ -330,6 +342,7 @@ export function applyStudentTurn({
     state.actions,
     labelSet,
     new Set(newlyUnlocked),
+    state.emotion,
   );
 
   const nextState: EngineState = {
@@ -378,6 +391,7 @@ export function applyStudentAction(
     nextActions,
     new Set(),
     new Set(),
+    state.emotion,
   );
 
   return {
