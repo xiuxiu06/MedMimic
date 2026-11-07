@@ -1,6 +1,7 @@
 import { finalizeBranch, restoreCheckpoint } from "../../../lib/checkpoints";
-import { evaluateOutcome, JORDAN_SCENARIO } from "../../../lib/engine";
+import { evaluateOutcome } from "../../../lib/engine";
 import { buildPatientPrompt } from "../../../lib/patientPrompt";
+import { getScenario, type ScenarioV2 } from "../../../lib/scenarios";
 import type {
   Branch,
   Checkpoint,
@@ -18,13 +19,23 @@ export interface RewindRequestBody {
     messages: Message[];
     timeline: TimelineEvent[];
   };
+  sourceTimeline?: TimelineEvent[];
   nextBranchId?: string;
+  caseId?: string;
+  scenario?: ScenarioV2;
 }
 
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as RewindRequestBody;
-    const { checkpoint, currentBranch, nextBranchId } = body;
+    const {
+      checkpoint,
+      currentBranch,
+      sourceTimeline,
+      nextBranchId,
+      scenario,
+      caseId,
+    } = body;
 
     if (
       !checkpoint ||
@@ -37,6 +48,8 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
+
+    const activeScenario = scenario ?? getScenario(caseId);
 
     let completedBranch: Branch | undefined;
     let completedOutcome: ReturnType<typeof evaluateOutcome> | undefined;
@@ -57,13 +70,13 @@ export async function POST(request: Request) {
 
     const restored = restoreCheckpoint(
       checkpoint,
-      currentBranch?.timeline ?? [],
+      currentBranch?.timeline ?? sourceTimeline ?? [],
       nextBranchId ?? `branch-rewind-${Date.now()}`,
     );
 
     const patientPrompt = buildPatientPrompt(
       restored.engineState,
-      JORDAN_SCENARIO,
+      activeScenario,
     );
 
     return Response.json({

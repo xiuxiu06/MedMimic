@@ -1,4 +1,5 @@
 import scenarioData from "../data/scenario.jordan.json";
+import { isJordanCaseId, type ScenarioV2 } from "./scenarios";
 import type {
   ActionId,
   Disclosure,
@@ -54,7 +55,7 @@ export interface StepTurnInput {
   labels: TurnLabel[];
   quote: string;
   elapsedSec: number;
-  scenario?: Scenario;
+  scenario?: Scenario | ScenarioV2;
 }
 
 export interface StepTurnResult {
@@ -89,15 +90,17 @@ function isAlwaysAvailable(disclosure: Disclosure): boolean {
 }
 
 export function createInitialEngineState(
-  scenario: Scenario = JORDAN_SCENARIO,
+  scenario: Scenario | ScenarioV2 = JORDAN_SCENARIO,
 ): EngineState {
   const initialUnlocked = scenario.disclosures
     .filter(isAlwaysAvailable)
     .map((d) => d.id);
+  const initialEmotion: Emotion =
+    (scenario as ScenarioV2).initialEmotion ?? "neutral";
 
   return {
     trust: clampTrust(scenario.startTrust),
-    emotion: "neutral",
+    emotion: initialEmotion,
     unlocked: initialUnlocked,
     firedEvents: [],
     actions: [],
@@ -143,7 +146,15 @@ export function deriveEmotion(
   turnLabels: ReadonlySet<TurnLabel>,
   newlyUnlocked: ReadonlySet<string>,
   prevEmotion?: Emotion,
+  scenario?: Scenario | ScenarioV2,
 ): Emotion {
+  const v2 = scenario as ScenarioV2 | undefined;
+  const aggression = v2?.aggressionLevel ?? 2;
+  const isHostileBaseline =
+    aggression >= 4 || v2?.temperament === "hostile_volatile";
+  const isAgitatedBaseline = v2?.temperament === "agitated_panicked";
+  const isTearfulBaseline = v2?.temperament === "tearful_vulnerable";
+
   const hasWarmth =
     turnLabels.has("empathy") || turnLabels.has("reflection");
   const hasInvalidation =
@@ -151,7 +162,19 @@ export function deriveEmotion(
     turnLabels.has("premature_reassurance") ||
     turnLabels.has("closed_rapid");
 
-  if (turnLabels.has("dismissive") && trust < 65) {
+  if (turnLabels.has("dismissive") && trust < (isHostileBaseline ? 80 : 65)) {
+    return "irritable";
+  }
+
+  // Volatile / aggressive patients stay prickly and angry until genuinely de-escalated
+  if (
+    isHostileBaseline &&
+    ((trust < 48 && !hasWarmth) || (hasInvalidation && trust < 70))
+  ) {
+    return "irritable";
+  }
+
+  if (isAgitatedBaseline && trust < 46 && !hasWarmth) {
     return "irritable";
   }
 
@@ -178,7 +201,8 @@ export function deriveEmotion(
   if (
     newlyUnlocked.has("suicidal_thoughts") ||
     newlyUnlocked.has("plan_and_means") ||
-    unlocked.has("suicidal_thoughts")
+    unlocked.has("suicidal_thoughts") ||
+    (isTearfulBaseline && trust < 65)
   ) {
     return "tearful";
   }
@@ -189,6 +213,10 @@ export function deriveEmotion(
     unlocked.has("job_loss")
   ) {
     return "sad";
+  }
+
+  if (v2?.temperament === "stoic_minimizer" && trust < 56) {
+    return "withdrawn";
   }
 
   return "neutral";
@@ -317,21 +345,27 @@ export function applyStudentTurn({
     fireOnce(ENGINE_EVENTS.OPENS_UP);
   }
 
-  // 5. Mark demo checkpoint when "low_mood" ("Everything's just... heavy.") unlocks
+  // 5. Mark demo checkpoint when "low_mood" (critical mood cue) unlocks
+  const v2 = scenario as ScenarioV2;
+  const cpId = v2.checkpoint?.id ?? DEMO_CHECKPOINT_ID;
+  const cpTrigger = v2.checkpoint?.whenUnlocked ?? "low_mood";
+  const cpQuote = v2.checkpoint?.quote ?? "Everything's just… heavy.";
+  const cpWord = v2.checkpoint?.keyword ?? "heavy";
+
   let shouldSaveCheckpoint: StepTurnResult["shouldSaveCheckpoint"];
   const alreadyHasHeavyCheckpoint = nextTimeline.some(
-    (ev) => ev.kind === "checkpoint" && ev.label === DEMO_CHECKPOINT_ID,
+    (ev) => ev.kind === "checkpoint" && ev.label === cpId,
   );
-  if (newlyUnlocked.includes("low_mood") && !alreadyHasHeavyCheckpoint) {
+  if (newlyUnlocked.includes(cpTrigger) && !alreadyHasHeavyCheckpoint) {
     nextTimeline.push({
       t: nextElapsedSec,
       kind: "checkpoint",
-      label: DEMO_CHECKPOINT_ID,
-      quote: "Everything's just… heavy.",
+      label: cpId,
+      quote: cpQuote,
     });
     shouldSaveCheckpoint = {
-      id: DEMO_CHECKPOINT_ID,
-      reason: 'Jordan mentions feeling "heavy"',
+      id: cpId,
+      reason: `${scenario.patient.name} mentions feeling "${cpWord}"`,
     };
   }
 
@@ -343,6 +377,7 @@ export function applyStudentTurn({
     labelSet,
     new Set(newlyUnlocked),
     state.emotion,
+    scenario,
   );
 
   const nextState: EngineState = {
@@ -369,6 +404,7 @@ export function applyStudentAction(
   timeline: TimelineEvent[],
   action: ActionId,
   elapsedSec: number = state.elapsedSec,
+  scenario?: Scenario | ScenarioV2,
 ): { state: EngineState; timeline: TimelineEvent[] } {
   const nextElapsedSec = Math.max(state.elapsedSec, Math.round(elapsedSec));
   const nextActions = state.actions.includes(action)
@@ -392,6 +428,7 @@ export function applyStudentAction(
     new Set(),
     new Set(),
     state.emotion,
+    scenario,
   );
 
   return {
@@ -510,23 +547,42 @@ export function evaluateOutcome(
 /**
  * Contextual hints for the Encounter UI "Hints" toggle (off for practice, on for demo).
  */
-export function getEncounterHints(state: EngineState): string[] {
+export function getEncounterHints(
+  state: EngineState,
+  scenario: Scenario | ScenarioV2 = JORDAN_SCENARIO,
+): string[] {
   const unlocked = new Set(state.unlocked);
   const hints: string[] = [];
+  const v2 = scenario as ScenarioV2;
+  const cpWord = v2.checkpoint?.keyword ?? "heavy";
+  const isJordan = isJordanCaseId(scenario.id);
+
+  if (
+    (v2.temperament === "hostile_volatile" || state.emotion === "irritable") &&
+    state.trust < 50
+  ) {
+    hints.push(
+      '"I can hear how frustrated and exhausted you are right now—I\'m not here to brush you off, and I want to actually listen to what you\'ve been dealing with."',
+    );
+  }
 
   if (!unlocked.has("job_loss")) {
     hints.push(
-      '"When did the trouble sleeping start—did anything change around two months ago?"',
+      isJordan
+        ? '"When did the trouble sleeping start—did anything change around two months ago?"'
+        : '"When did all of this really start getting bad—did anything big change in your life or work around that time?"',
     );
   }
   if (!unlocked.has("low_mood")) {
     hints.push(
-      '"Beyond being tired, how has your mood been feeling day to day?"',
+      isJordan
+        ? '"Beyond being tired, how has your mood been feeling day to day?"'
+        : '"Beyond the physical toll, how has all of this been affecting your mood day to day?"',
     );
   }
   if (unlocked.has("low_mood") && state.trust < 60) {
     hints.push(
-      '"You mentioned everything feels heavy right now—it sounds like you have been carrying a lot on your own."',
+      `"You mentioned feeling ${cpWord} right now—it sounds like you have been carrying a lot on your own."`,
     );
   }
   if (!unlocked.has("hopelessness") && state.trust >= 50) {
@@ -534,7 +590,7 @@ export function getEncounterHints(state: EngineState): string[] {
   }
   if (!unlocked.has("suicidal_thoughts") && state.trust >= 60) {
     hints.push(
-      '"When things feel this heavy and hopeless, some people have thoughts of ending their life. Have you been having thoughts like that?"',
+      `"When things feel this ${cpWord} and hopeless, some people have thoughts of ending their life. Have you been having thoughts like that?"`,
     );
   }
   if (unlocked.has("suicidal_thoughts") && !unlocked.has("plan_and_means")) {

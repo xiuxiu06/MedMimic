@@ -1,7 +1,12 @@
-import { createInitialEngineState, JORDAN_SCENARIO } from "../../../lib/engine";
+import { createInitialEngineState } from "../../../lib/engine";
 import { gemini } from "../../../lib/gemini";
 import { MODELS } from "../../../lib/models";
 import { buildPatientPrompt } from "../../../lib/patientPrompt";
+import {
+  getScenario,
+  selectVoiceForPatient,
+  type ScenarioV2,
+} from "../../../lib/scenarios";
 import type { EngineState } from "../../../lib/types";
 
 export function resolveLiveModel(): string {
@@ -14,6 +19,8 @@ export function resolveLiveModel(): string {
 
 export interface LiveTokenRequestBody {
   state?: EngineState;
+  caseId?: string;
+  scenario?: ScenarioV2;
 }
 
 /**
@@ -23,15 +30,31 @@ export interface LiveTokenRequestBody {
  */
 export async function POST(request: Request) {
   try {
-    let state = createInitialEngineState();
+    let activeScenario = getScenario();
+    let state: EngineState | undefined;
+
     try {
       const body = (await request.json()) as LiveTokenRequestBody;
+      if (body?.scenario) {
+        activeScenario = body.scenario;
+      } else if (body?.caseId) {
+        activeScenario = getScenario(body.caseId);
+      }
       if (body?.state) {
         state = body.state;
       }
     } catch {
-      // Empty body is fine; defaults to initial engine state
+      // Empty body is fine; defaults to Jordan scenario & initial state
     }
+
+    const effectiveState = state ?? createInitialEngineState(activeScenario);
+    const voiceName =
+      activeScenario.voiceName ??
+      selectVoiceForPatient(
+        activeScenario.gender ?? "male",
+        activeScenario.temperament ?? "guarded_tired",
+        activeScenario.patient.age,
+      );
 
     const now = Date.now();
     const expireTime = new Date(now + 30 * 60 * 1000).toISOString();
@@ -55,8 +78,9 @@ export async function POST(request: Request) {
       token: authToken.name,
       apiVersion: "v1alpha",
       model: resolveLiveModel(),
+      voiceName,
       expireTime,
-      systemInstruction: buildPatientPrompt(state, JORDAN_SCENARIO),
+      systemInstruction: buildPatientPrompt(effectiveState, activeScenario),
     });
   } catch (err) {
     return Response.json(

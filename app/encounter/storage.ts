@@ -1,3 +1,4 @@
+import type { ScenarioV2 } from "../../lib/scenarios";
 import type {
   Branch,
   Checkpoint,
@@ -12,9 +13,12 @@ export const STORAGE_KEYS = {
   BRANCHES: "medmimic:branches",
   CURRENT_BRANCH: "medmimic:currentBranch",
   CLOUD_SESSION_ID: "medmimic:cloudSessionId",
+  GENERATED_SCENARIOS: "medmimic:generatedScenarios",
+  ACTIVE_CASE_ID: "medmimic:activeCaseId",
 } as const;
 
 export interface StoredActiveSession {
+  caseId?: string;
   branchId: string;
   parentCheckpoint?: string;
   state: EngineState;
@@ -24,7 +28,9 @@ export interface StoredActiveSession {
 }
 
 function isBrowser(): boolean {
-  return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
+  return (
+    typeof window !== "undefined" && typeof window.localStorage !== "undefined"
+  );
 }
 
 export function saveActiveSession(session: StoredActiveSession): void {
@@ -110,6 +116,52 @@ export function loadCompletedBranches(): Branch[] {
     return Array.isArray(parsed) ? (parsed as Branch[]) : [];
   } catch {
     return [];
+  }
+}
+
+export function loadGeneratedScenarios(): ScenarioV2[] {
+  if (!isBrowser()) return [];
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEYS.GENERATED_SCENARIOS);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as ScenarioV2[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveGeneratedScenario(scenario: ScenarioV2): ScenarioV2[] {
+  if (!isBrowser()) return [scenario];
+  try {
+    const existing = loadGeneratedScenarios();
+    const filtered = existing.filter((s) => s.id !== scenario.id);
+    const next = [scenario, ...filtered].slice(0, 15);
+    window.localStorage.setItem(
+      STORAGE_KEYS.GENERATED_SCENARIOS,
+      JSON.stringify(next),
+    );
+    return next;
+  } catch {
+    return [scenario];
+  }
+}
+
+export function saveActiveCaseId(caseId: string): void {
+  if (!isBrowser()) return;
+  try {
+    window.localStorage.setItem(STORAGE_KEYS.ACTIVE_CASE_ID, caseId);
+  } catch {
+    // Ignore
+  }
+}
+
+export function loadActiveCaseId(): string | null {
+  if (!isBrowser()) return null;
+  try {
+    return window.localStorage.getItem(STORAGE_KEYS.ACTIVE_CASE_ID);
+  } catch {
+    return null;
   }
 }
 

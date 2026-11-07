@@ -9,7 +9,6 @@ import {
   createInitialEngineState,
   DEMO_CHECKPOINT_ID,
   evaluateOutcome,
-  JORDAN_SCENARIO,
   setStudentRisk,
 } from "../../../lib/engine";
 import { gemini } from "../../../lib/gemini";
@@ -19,6 +18,7 @@ import {
   isOutOfCharacterOrNonEnglish,
   sanitizePatientReply,
 } from "../../../lib/patientPrompt";
+import { getScenario, type ScenarioV2 } from "../../../lib/scenarios";
 import type {
   ActionId,
   Checkpoint,
@@ -48,11 +48,17 @@ export interface TurnRequestBody {
   mode?: "text" | "voice";
   action?: ActionId;
   studentRisk?: RiskLevel;
+  caseId?: string;
+  scenario?: ScenarioV2;
   /** Optional pre-computed labels (useful for deterministic unit tests) */
   overrideLabels?: TurnLabel[];
 }
 
-function toInteractionSteps(messages: readonly Message[]) {
+function toInteractionSteps(
+  messages: readonly Message[],
+  patientName: string,
+) {
+  const firstName = patientName.split(/\s+/)[0] || patientName;
   const steps = messages.map((msg) =>
     msg.role === "student"
       ? {
@@ -66,14 +72,14 @@ function toInteractionSteps(messages: readonly Message[]) {
   );
 
   // Ensure the turn sequence starts with a clinician user_input turn so the model
-  // never loses role polarity (user = clinician, model = patient Jordan Lee).
+  // never loses role polarity (user = clinician, model = standardized patient).
   if (steps.length > 0 && steps[0].type === "model_output") {
     steps.unshift({
       type: "user_input" as const,
       content: [
         {
           type: "text" as const,
-          text: "Hi Jordan, thanks for coming into the clinic today. What brings you in?",
+          text: `Hi ${firstName}, thanks for coming in today. What brings you in?`,
         },
       ],
     });
@@ -86,8 +92,12 @@ async function generatePatientTextReply(
   systemInstruction: string,
   messagesWithStudentTurn: readonly Message[],
   state: EngineState,
+  scenario: ScenarioV2,
 ): Promise<string> {
-  const baseSteps = toInteractionSteps(messagesWithStudentTurn);
+  const baseSteps = toInteractionSteps(
+    messagesWithStudentTurn,
+    scenario.patient.name,
+  );
 
   for (const model of resolveFastModelCandidates()) {
     try {
@@ -129,7 +139,7 @@ async function generatePatientTextReply(
             content: [
               {
                 type: "text" as const,
-                text: "[DIRECTOR CUE FOR JORDAN: Stay strictly in first-person character ('I') as patient Jordan Lee speaking English (en-US) to the clinician examining you. Never give health disclaimers or advice. Prefer 1–2 conversational sentences by default, or 3–4 sentences when sharing newly unlocked details or when more context feels appropriate.]",
+                text: `[DIRECTOR CUE FOR ${scenario.patient.name.toUpperCase()}: Stay strictly in first-person character ('I') as patient ${scenario.patient.name} speaking English (en-US) to the clinician examining you. Never give health disclaimers or advice. Prefer 1–2 conversational sentences by default, or 3–4 sentences when sharing newly unlocked details or when more context feels appropriate.]`,
               },
             ],
           },
@@ -161,21 +171,24 @@ async function generatePatientTextReply(
   }
 
   // Safe in-character fallback if all endpoints are temporarily unavailable
-  if (state.trust < 35) {
-    return "Look, I'm just really tired. Is there anything you can give me to help me sleep?";
+  if (state.trust < 36 || scenario.temperament === "hostile_volatile") {
+    return "Look, I've already been waiting in here—is there actually something you can do to help me today or not?";
   }
-  return "Yeah, I know—I'm completely exhausted. I just haven't been able to get more than two or three hours of sleep a night.";
+  return "Yeah, I'm just completely worn down right now and trying to figure out how to get some relief.";
 }
 
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as TurnRequestBody;
+    const activeScenario: ScenarioV2 =
+      body.scenario ?? getScenario(body.caseId);
 
-    let state: EngineState = body.state ?? createInitialEngineState();
+    let state: EngineState =
+      body.state ?? createInitialEngineState(activeScenario);
     let timeline: TimelineEvent[] = body.timeline ? [...body.timeline] : [];
     const messages: Message[] = body.messages
       ? [...body.messages]
-      : [{ role: "patient", text: JORDAN_SCENARIO.patient.opening, t: 0 }];
+      : [{ role: "patient", text: activeScenario.patient.opening, t: 0 }];
 
     const elapsedSec =
       typeof body.elapsedSec === "number" && Number.isFinite(body.elapsedSec)
@@ -196,6 +209,7 @@ export async function POST(request: Request) {
         timeline,
         body.action,
         elapsedSec,
+        activeScenario,
       );
       state = actionResult.state;
       timeline = actionResult.timeline;
@@ -228,6 +242,7 @@ export async function POST(request: Request) {
         labels,
         quote: studentText,
         elapsedSec,
+        scenario: activeScenario,
       });
 
       state = stepped.state;
@@ -244,11 +259,11 @@ export async function POST(request: Request) {
       });
 
       // 3. Build strictly-gated patient prompt + compact Live director cue
-      const patientPrompt = buildPatientPrompt(state, JORDAN_SCENARIO, {
+      const patientPrompt = buildPatientPrompt(state, activeScenario, {
         newlyUnlocked,
         turnEvents: newlyFiredEvents,
       });
-      const liveDirectorCue = buildLiveDirectorCue(state, JORDAN_SCENARIO, {
+      const liveDirectorCue = buildLiveDirectorCue(state, activeScenario, {
         newlyUnlocked,
         turnEvents: newlyFiredEvents,
       });
@@ -259,6 +274,7 @@ export async function POST(request: Request) {
           patientPrompt,
           messages,
           state,
+          activeScenario,
         );
         messages.push({
           role: "patient",
@@ -266,7 +282,14 @@ export async function POST(request: Request) {
           t: state.elapsedSec + 2,
         });
 
-        // 5. Save checkpoint snapshot right AFTER Jordan's "heavy" reply lands in messages[]
+        const cpId = activeScenario.checkpoint?.id ?? DEMO_CHECKPOINT_ID;
+        const cpKeyword = activeScenario.checkpoint?.keyword ?? "heavy";
+        const cpQuote =
+          activeScenario.checkpoint?.quote ?? "Everything's just… heavy.";
+        const escapedKw = cpKeyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const kwRegex = new RegExp(`\\b${escapedKw}\\b`, "i");
+
+        // 5. Save checkpoint snapshot right AFTER the patient's critical reply lands in messages[]
         if (shouldSaveCheckpoint) {
           checkpoint = createCheckpoint(
             shouldSaveCheckpoint.id,
@@ -275,19 +298,19 @@ export async function POST(request: Request) {
             timeline.length,
           );
         } else if (
-          /\bheavy\b/i.test(patientReply) &&
+          kwRegex.test(patientReply) &&
           !timeline.some(
-            (ev) => ev.kind === "checkpoint" && ev.label === DEMO_CHECKPOINT_ID,
+            (ev) => ev.kind === "checkpoint" && ev.label === cpId,
           )
         ) {
           timeline.push({
             t: state.elapsedSec,
             kind: "checkpoint",
-            label: DEMO_CHECKPOINT_ID,
-            quote: "Everything's just… heavy.",
+            label: cpId,
+            quote: cpQuote,
           });
           checkpoint = createCheckpoint(
-            DEMO_CHECKPOINT_ID,
+            cpId,
             state,
             messages,
             timeline.length,
@@ -315,7 +338,7 @@ export async function POST(request: Request) {
     }
 
     // Action-only or risk-only update (no new student utterance)
-    const patientPrompt = buildPatientPrompt(state, JORDAN_SCENARIO);
+    const patientPrompt = buildPatientPrompt(state, activeScenario);
     return Response.json({
       ok: true,
       mode,

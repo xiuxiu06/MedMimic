@@ -7,11 +7,11 @@ import {
   StartSensitivity,
   type LiveServerMessage,
 } from "@google/genai";
-import { JORDAN_SCENARIO } from "../../lib/engine";
 import {
   isOutOfCharacterOrNonEnglish,
   sanitizePatientReply,
 } from "../../lib/patientPrompt";
+import { JORDAN_SCENARIO_V2, type ScenarioV2 } from "../../lib/scenarios";
 import type { EngineState, Message } from "../../lib/types";
 
 export type LiveConnectionStatus =
@@ -277,7 +277,11 @@ export function useGeminiLive(callbacks: UseGeminiLiveCallbacks) {
   }, []);
 
   const connect = useCallback(
-    async (state: EngineState, seedMessages: readonly Message[] = []) => {
+    async (
+      state: EngineState,
+      seedMessages: readonly Message[] = [],
+      scenario: ScenarioV2 = JORDAN_SCENARIO_V2,
+    ) => {
       disconnect();
       setStatus("connecting");
       setError(null);
@@ -286,13 +290,14 @@ export function useGeminiLive(callbacks: UseGeminiLiveCallbacks) {
         const res = await fetch("/api/live-token", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ state }),
+          body: JSON.stringify({ state, scenario }),
         });
         const data = (await res.json()) as {
           ok: boolean;
           token?: string;
           apiVersion?: string;
           model?: string;
+          voiceName?: string;
           systemInstruction?: string;
           error?: string;
         };
@@ -306,6 +311,9 @@ export function useGeminiLive(callbacks: UseGeminiLiveCallbacks) {
           httpOptions: { apiVersion: data.apiVersion ?? "v1alpha" },
         });
 
+        const selectedVoice =
+          data.voiceName ?? scenario.voiceName ?? "Achird";
+
         const session = await ai.live.connect({
           model: data.model,
           config: {
@@ -313,7 +321,7 @@ export function useGeminiLive(callbacks: UseGeminiLiveCallbacks) {
             speechConfig: {
               voiceConfig: {
                 prebuiltVoiceConfig: {
-                  voiceName: "Achird",
+                  voiceName: selectedVoice,
                 },
               },
             },
@@ -396,7 +404,7 @@ export function useGeminiLive(callbacks: UseGeminiLiveCallbacks) {
                             role: "user",
                             parts: [
                               {
-                                text: "[DIRECTOR CUE FOR JORDAN — SILENT CORRECTION: Do NOT give disclaimers, health facts, or speak Spanish. Reply right now in 1–2 natural conversational sentences (or 3–4 if appropriate) strictly in English (en-US) in first person ('I') as exhausted clinic patient Jordan Lee responding to the clinician.]",
+                                text: `[DIRECTOR CUE FOR ${scenario.patient.name.toUpperCase()} — SILENT CORRECTION: Do NOT give disclaimers, health facts, or speak Spanish. Reply right now in 1–2 natural conversational sentences (or 3–4 if appropriate) strictly in English (en-US) in first person ('I') as clinic patient ${scenario.patient.name} responding to the clinician.]`,
                               },
                             ],
                           },
@@ -447,13 +455,15 @@ export function useGeminiLive(callbacks: UseGeminiLiveCallbacks) {
 
         // Seed conversation history starting with an explicit clinician user turn
         // so the Live model never confuses who is the clinician (user) vs patient (model).
+        const firstName =
+          scenario.patient.name.split(/\s+/)[0] || scenario.patient.name;
         const effectiveSeed =
           seedMessages.length > 0
             ? seedMessages
             : [
                 {
                   role: "patient" as const,
-                  text: JORDAN_SCENARIO.patient.opening,
+                  text: scenario.patient.opening,
                   t: 0,
                 },
               ];
@@ -468,7 +478,7 @@ export function useGeminiLive(callbacks: UseGeminiLiveCallbacks) {
             role: "user",
             parts: [
               {
-                text: "Hi Jordan, thanks for coming into the clinic today. What brings you in?",
+                text: `Hi ${firstName}, thanks for coming into the clinic today. What brings you in?`,
               },
             ],
           });

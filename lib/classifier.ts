@@ -42,14 +42,14 @@ const CLASSIFIER_SYSTEM_PROMPT = `You are a clinical communication evaluator for
 Classify ONLY the healthcare student's latest message into 1 to 4 labels from the allowed enum. Multiple labels MAY apply to a single utterance (for example, reflecting the patient's words AND asking directly about suicide -> ["reflection", "asked_SI_directly"]).
 
 Label definitions:
-- "asked_onset": Asks when sleep trouble or symptoms started, timeline/duration, or what life/work changes happened around onset.
-- "asked_mood": Specifically asks about emotional state, mood, sadness, depression, low spirits, energy, or loss of interest/pleasure (e.g., "How has your mood been?", "Have you been feeling down or depressed?", "How is all of this affecting you emotionally?"). IMPORTANT: Casual opening greetings like "Hello, how are you?", "Hi Jordan, how are you doing?", or "Hello, how are you feeling today?" are polite greetings ("other"), NOT "asked_mood".
+- "asked_onset": Asks when symptoms, pain, panic, nightmares, or sleep trouble started, timeline/duration, or what life/work/medical changes happened around onset.
+- "asked_mood": Specifically asks about emotional state, mood, sadness, depression, low spirits, energy, emotional toll, or loss of interest/pleasure (e.g., "How has your mood been?", "Have you been feeling down or depressed?", "How is all of this affecting you emotionally?"). IMPORTANT: Casual opening greetings like "Hello, how are you?", "Hi Jordan, how are you doing?", or "Hello, how are you feeling today?" are polite greetings ("other"), NOT "asked_mood".
 - "asked_hope": Asks about the future, hope, outlook, or whether things feel like they can get better.
 - "asked_SI_directly": Explicitly and directly asks about suicidal thoughts, wanting to die, not wanting to wake up, ending their life, or self-harm. IMPORTANT: vague questions like "Are you safe?" or "Having any dark thoughts?" do NOT count as "asked_SI_directly"—it must be direct and unambiguous.
 - "asked_plan": Asks about a specific suicide plan, method, preparation, or access to lethal means at home (e.g., pills, medications, weapons).
 - "asked_support": Asks about support system, family, friends, people they care about, protective factors, or reasons for living.
-- "reflection": Mirrors, paraphrases, or reflects the patient's own words or emotional experience (e.g., echoing the patient's word "heavy", or summarizing what the patient just shared).
-- "empathy": Validates feelings, expresses genuine warmth/care, thanks the patient for sharing, or normalizes their struggle ("Many people going through a sudden layoff feel overwhelmed").
+- "reflection": Mirrors, paraphrases, or reflects the patient's own words, frustration, or emotional experience (e.g., echoing a key emotional word the patient used, or summarizing why they feel fed up, exhausted, or cornered).
+- "empathy": Validates feelings or frustration, de-escalates anger with genuine respect/care, thanks the patient for sharing, or normalizes their struggle ("I hear how frustrating it is to wait and feel brushed off—I want to actually listen").
 - "premature_reassurance": Offers cliché or premature reassurance before understanding ("You'll be fine", "Things will work out", "Don't worry, you'll find a new job soon").
 - "dismissive": Minimizes feelings, judges, lectures, rushes, scolds, refuses rudely, or brushes off the patient's distress ("Everyone loses sleep", "Just try relaxing", "Stop complaining", "You're overreacting", "That doesn't sound like a big deal").
 - "closed_rapid": Stacks 3+ rapid-fire closed yes/no checklist questions in a single turn or interrogates mechanically without rapport.
