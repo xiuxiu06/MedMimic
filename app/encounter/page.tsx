@@ -11,6 +11,10 @@ import {
   useState,
 } from "react";
 import { createCheckpoint, finalizeBranch } from "../../lib/checkpoints";
+import {
+  syncCheckpointToCloud,
+  syncCompletedBranchToCloud,
+} from "../../lib/supabase/sync";
 import { AppHeader } from "../../components/AppHeader";
 import {
   applyStudentAction,
@@ -217,16 +221,26 @@ function EncounterWorkspace() {
     const savedBranches = loadCompletedBranches();
     const savedActive = loadActiveSession();
 
+    const shouldAutoRestoreAfterCompletedRun =
+      !savedActive && savedBranches.length > 0 && savedCheckpoints.length > 0;
+
     const targetCheckpoint = rewindParam
       ? savedCheckpoints.find((cp) => cp.id === rewindParam) ??
         savedCheckpoints[savedCheckpoints.length - 1]
-      : undefined;
+      : shouldAutoRestoreAfterCompletedRun
+        ? savedCheckpoints.find((cp) => cp.id === DEMO_CHECKPOINT_ID) ??
+          savedCheckpoints[savedCheckpoints.length - 1]
+        : undefined;
 
     if (targetCheckpoint) {
+      const matchingBranch =
+        savedBranches.find((b) =>
+          b.timeline.some(
+            (e) => e.kind === "checkpoint" && e.label === targetCheckpoint.id,
+          ),
+        ) ?? savedBranches[savedBranches.length - 1];
       const baseTimeline =
-        savedBranches[savedBranches.length - 1]?.timeline ??
-        savedActive?.timeline ??
-        [];
+        matchingBranch?.timeline ?? savedActive?.timeline ?? [];
       const nextId = `run-${savedBranches.length + 1}`;
       queueMicrotask(() => {
         setCheckpoints(savedCheckpoints);
@@ -258,6 +272,10 @@ function EncounterWorkspace() {
         setEngineState(savedActive.state);
         setMessages(savedActive.messages);
         setTimeline(savedActive.timeline);
+      } else if (savedBranches.length > 0) {
+        // Returning after a completed run that ended before any checkpoint was reached:
+        // start a fresh run ID so we never overwrite run-1.
+        setBranchId(`run-${savedBranches.length + 1}`);
       }
     });
   }, [rewindParam]);
@@ -340,6 +358,9 @@ function EncounterWorkspace() {
       const data = (await res.json()) as TurnApiResponse;
       if (!data.ok) return;
 
+      stateRef.current = data.state;
+      elapsedRef.current = data.state.elapsedSec;
+      timelineRef.current = data.timeline;
       setEngineState(data.state);
       setTimeline(data.timeline);
       setLastTurnFeedback({
@@ -349,7 +370,19 @@ function EncounterWorkspace() {
       });
 
       if (data.shouldSaveCheckpoint) {
-        pendingVoiceCheckpointRef.current = data.shouldSaveCheckpoint.id;
+        if (!liveRef.current?.isSpeaking && messagesRef.current.at(-1)?.role === "patient") {
+          const cp = createCheckpoint(
+            data.shouldSaveCheckpoint.id,
+            data.state,
+            messagesRef.current,
+            data.timeline.length,
+          );
+          const updated = saveCheckpointItem(cp);
+          setCheckpoints(updated);
+          void syncCheckpointToCloud(cp, JORDAN_SCENARIO.id);
+        } else {
+          pendingVoiceCheckpointRef.current = data.shouldSaveCheckpoint.id;
+        }
       }
 
       const cue = data.liveDirectorCue ?? data.patientPrompt;
@@ -391,6 +424,7 @@ function EncounterWorkspace() {
       );
       const updated = saveCheckpointItem(cp);
       setCheckpoints(updated);
+      void syncCheckpointToCloud(cp, JORDAN_SCENARIO.id);
     }
   }, []);
 
@@ -474,6 +508,7 @@ function EncounterWorkspace() {
           if (data.checkpoint) {
             const updatedCps = saveCheckpointItem(data.checkpoint);
             setCheckpoints(updatedCps);
+            void syncCheckpointToCloud(data.checkpoint, JORDAN_SCENARIO.id);
           }
         }
       } catch (err) {
@@ -521,10 +556,24 @@ function EncounterWorkspace() {
       checkpoints.some((c) => c.id === DEMO_CHECKPOINT_ID)
         ? `cp-${formatDuration(engineState.elapsedSec).replace(":", "m")}s`
         : DEMO_CHECKPOINT_ID;
-    const cp = createCheckpoint(id, engineState, messages, timeline.length);
+    const latestPatientQuote = [...messages]
+      .reverse()
+      .find((m) => m.role === "patient")?.text;
+    const nextTimeline: TimelineEvent[] = [
+      ...timeline,
+      {
+        t: engineState.elapsedSec,
+        kind: "checkpoint",
+        label: id,
+        quote: latestPatientQuote,
+      },
+    ];
+    setTimeline(nextTimeline);
+    const cp = createCheckpoint(id, engineState, messages, nextTimeline.length);
     const updated = saveCheckpointItem(cp);
     setCheckpoints(updated);
-  }, [checkpoints, engineState, messages, timeline.length]);
+    void syncCheckpointToCloud(cp, JORDAN_SCENARIO.id);
+  }, [checkpoints, engineState, messages, timeline]);
 
   const handleRewind = useCallback(
     async (checkpointToRestore?: Checkpoint) => {
@@ -540,23 +589,33 @@ function EncounterWorkspace() {
         live.disconnect();
       }
 
+      const alreadyFinalizedCurrent =
+        Boolean(endedSummary) ||
+        completedBranches.some((b) => b.id === branchId);
+
       setUiError(null);
       setEndedSummary(null);
 
       try {
-        const nextRunNumber = completedBranches.length + 2;
+        const nextRunNumber = alreadyFinalizedCurrent
+          ? completedBranches.length + 1
+          : completedBranches.length + 2;
         const res = await fetch("/api/rewind", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             checkpoint: target,
-            currentBranch: {
-              id: branchId,
-              parentCheckpoint,
-              engineState,
-              messages,
-              timeline,
-            },
+            ...(alreadyFinalizedCurrent
+              ? { sourceTimeline: timeline }
+              : {
+                  currentBranch: {
+                    id: branchId,
+                    parentCheckpoint,
+                    engineState,
+                    messages,
+                    timeline,
+                  },
+                }),
             nextBranchId: `run-${nextRunNumber}`,
           }),
         });
@@ -569,6 +628,11 @@ function EncounterWorkspace() {
         if (data.completedBranch) {
           const allBranches = saveCompletedBranch(data.completedBranch);
           setCompletedBranches(allBranches);
+          void syncCompletedBranchToCloud(
+            data.completedBranch,
+            wasLiveConnected ? "voice" : "text",
+            JORDAN_SCENARIO.id,
+          );
         }
 
         setBranchId(data.restored.branchId);
@@ -593,7 +657,8 @@ function EncounterWorkspace() {
     [
       branchId,
       checkpoints,
-      completedBranches.length,
+      completedBranches,
+      endedSummary,
       engineState,
       live,
       messages,
@@ -603,7 +668,8 @@ function EncounterWorkspace() {
   );
 
   const handleEndEncounter = useCallback(() => {
-    if (live.status === "connected") {
+    const wasVoice = live.status === "connected";
+    if (wasVoice) {
       live.disconnect();
     }
     const branch = finalizeBranch({
@@ -618,6 +684,11 @@ function EncounterWorkspace() {
     clearActiveSession();
     setCompletedBranches(updatedBranches);
     setEndedSummary({ branch, outcome });
+    void syncCompletedBranchToCloud(
+      branch,
+      wasVoice ? "voice" : "text",
+      JORDAN_SCENARIO.id,
+    );
   }, [branchId, engineState, live, messages, parentCheckpoint, timeline]);
 
   const handleResetSimulation = useCallback(() => {

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { AuthHeaderChip } from "./AuthHeaderChip";
 
 export type Step = "briefing" | "encounter" | "debrief" | "compare";
 
@@ -34,7 +35,7 @@ export function Logo() {
   );
 }
 
-export function AppHeader({ active, right }: { active: Step; right?: ReactNode }) {
+export function AppHeader({ active, right }: { active?: Step; right?: ReactNode }) {
   return (
     <header className="flex flex-wrap items-center justify-between gap-4 border-b border-line bg-header px-4 py-4 sm:px-8">
       <Logo />
@@ -54,7 +55,10 @@ export function AppHeader({ active, right }: { active: Step; right?: ReactNode }
           </Link>
         ))}
       </nav>
-      {right ?? <span />}
+      <div className="flex flex-wrap items-center gap-2.5">
+        {right}
+        <AuthHeaderChip />
+      </div>
     </header>
   );
 }

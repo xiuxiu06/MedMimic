@@ -210,7 +210,7 @@ export function applyStudentTurn({
   const dedupedLabels: TurnLabel[] =
     labels.length > 0 ? Array.from(new Set(labels)) : ["other"];
   const labelSet = new Set<TurnLabel>(dedupedLabels);
-  const nextElapsedSec = Math.max(state.elapsedSec, Math.round(elapsedSec));
+  const nextElapsedSec = Math.max(state.elapsedSec + 1, Math.round(elapsedSec));
 
   // 1. Compute trust delta from unique labels in this turn
   const rawDelta = dedupedLabels.reduce(

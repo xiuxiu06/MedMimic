@@ -11,6 +11,7 @@ export const STORAGE_KEYS = {
   CHECKPOINTS: "medmimic:checkpoints",
   BRANCHES: "medmimic:branches",
   CURRENT_BRANCH: "medmimic:currentBranch",
+  CLOUD_SESSION_ID: "medmimic:cloudSessionId",
 } as const;
 
 export interface StoredActiveSession {
@@ -119,6 +120,7 @@ export function resetAllEncounterStorage(): void {
     window.localStorage.removeItem(STORAGE_KEYS.CHECKPOINTS);
     window.localStorage.removeItem(STORAGE_KEYS.BRANCHES);
     window.localStorage.removeItem(STORAGE_KEYS.CURRENT_BRANCH);
+    window.localStorage.removeItem(STORAGE_KEYS.CLOUD_SESSION_ID);
   } catch {
     // Ignore
   }
