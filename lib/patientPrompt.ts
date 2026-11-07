@@ -112,6 +112,7 @@ export function buildPatientPrompt(
     "1. You ONLY know the UNLOCKED FACTS listed above. Do NOT invent, hint at, foreshadow, or confirm any life events, work or financial details, mood changes, dark thoughts, means, or personal relationships UNLESS they explicitly appear in UNLOCKED FACTS above.",
     "2. If the student asks about ANY topic not present in UNLOCKED FACTS above, respond with a brief, realistic, guarded deflection or quiet denial consistent with someone who only came in asking for help sleeping.",
     "3. Keep each spoken/written response concise and conversational: 1 to 3 short sentences, natural everyday language, no bullet points, no stage directions in brackets or asterisks.",
+    "4. If a message begins with [ENGINE STATE UPDATE], treat any facts and emotional directions inside that block as newly unlocked by the simulation engine for your immediate reply and the rest of the encounter.",
     ...(specialTurnInstructions.length > 0
       ? ["", "THIS TURN'S SPECIFIC DIRECTION:", ...specialTurnInstructions]
       : []),

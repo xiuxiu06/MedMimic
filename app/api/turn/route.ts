@@ -1,4 +1,7 @@
-import { classifyStudentTurn, resolveFastModel } from "../../../lib/classifier";
+import {
+  classifyStudentTurn,
+  resolveFastModelCandidates,
+} from "../../../lib/classifier";
 import { createCheckpoint } from "../../../lib/checkpoints";
 import {
   applyStudentAction,
@@ -63,27 +66,33 @@ async function generatePatientTextReply(
   messagesWithStudentTurn: readonly Message[],
   state: EngineState,
 ): Promise<string> {
-  const interaction = await gemini().interactions.create({
-    model: resolveFastModel(),
-    system_instruction: systemInstruction,
-    input: toInteractionSteps(messagesWithStudentTurn),
-    store: false,
-    generation_config: {
-      temperature: 0.6,
-      max_output_tokens: 220,
-    },
-    safety_settings: [
-      { type: "dangerous_content", threshold: "block_only_high" },
-      { type: "harassment", threshold: "block_only_high" },
-      { type: "hate_speech", threshold: "block_only_high" },
-      { type: "sexually_explicit", threshold: "block_only_high" },
-    ],
-  });
+  for (const model of resolveFastModelCandidates()) {
+    try {
+      const interaction = await gemini().interactions.create({
+        model,
+        system_instruction: systemInstruction,
+        input: toInteractionSteps(messagesWithStudentTurn),
+        store: false,
+        generation_config: {
+          temperature: 0.6,
+          thinking_level: "minimal",
+        },
+        safety_settings: [
+          { type: "dangerous_content", threshold: "block_only_high" },
+          { type: "harassment", threshold: "block_only_high" },
+          { type: "hate_speech", threshold: "block_only_high" },
+          { type: "sexually_explicit", threshold: "block_only_high" },
+        ],
+      });
 
-  const reply = interaction.output_text?.trim();
-  if (reply) return reply;
+      const reply = interaction.output_text?.trim();
+      if (reply) return reply;
+    } catch {
+      // Fallback to next candidate model on 503/429
+    }
+  }
 
-  // Safe in-character fallback if output_text is unexpectedly empty
+  // Safe in-character fallback if all endpoints are temporarily unavailable
   if (state.trust < 35) {
     return "Look, I'm just really tired. Is there anything you can give me to help me sleep?";
   }

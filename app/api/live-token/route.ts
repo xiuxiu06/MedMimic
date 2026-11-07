@@ -5,7 +5,7 @@ import { buildPatientPrompt } from "../../../lib/patientPrompt";
 import type { EngineState } from "../../../lib/types";
 
 export function resolveLiveModel(): string {
-  const configured = MODELS.live;
+  const configured: string = MODELS.live;
   if (!configured || configured.startsWith("TODO")) {
     return "gemini-3.8-live";
   }
