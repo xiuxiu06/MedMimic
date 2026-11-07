@@ -1,0 +1,26 @@
+---
+description: MedMimic architecture and team rules
+alwaysApply: true
+---
+
+# MedMimic
+
+AI clinical simulator: students interview a voice-driven psychiatric patient (Gemini Live), make decisions, rewind to checkpoints, and get RAG-cited feedback. Full plan: TEAM_GUIDE.md.
+
+## Core principle
+The scenario ENGINE owns all clinical facts; Gemini only performs. The patient prompt may contain ONLY disclosures already unlocked in EngineState. Never put locked facts in any patient prompt.
+
+## Structure
+- `lib/types.ts` — shared contract. Do not change without the other teammate agreeing.
+- `lib/models.ts` — the only place model names live.
+- `lib/gemini.ts` — server-only Gemini client. Never import into client components; API key stays server-side.
+- `lib/engine.ts`, `classifier.ts`, `patientPrompt.ts`, `checkpoints.ts`, `/app/encounter` — Person A.
+- `lib/rag.ts`, `/app/api/debrief`, `/app/debrief`, `/app/compare`, `/app/briefing`, `/scripts` — Person B.
+- `data/` — scenario JSON, guideline chunks + embeddings, sources table.
+
+## Rules
+- TypeScript strict; validate Gemini JSON output against the types (structured output with a response schema).
+- RAG is used ONLY for the debrief, never during the live encounter.
+- Debrief feedback must cite retrieved chunk ids; never generate uncited clinical advice.
+- Keep safety UI: content note, 988 footer, "education only" disclaimer.
+- Next.js version may differ from training data: check node_modules/next/dist/docs before using unfamiliar APIs.
