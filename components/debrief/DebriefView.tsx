@@ -19,7 +19,17 @@ function RewindIcon() {
   );
 }
 
-export function OutcomeBanner({ title, detail, tone }: { title: string; detail: string; tone: OutcomeTone }) {
+export function OutcomeBanner({
+  title,
+  detail,
+  tone,
+  canCompare = false,
+}: {
+  title: string;
+  detail: string;
+  tone: OutcomeTone;
+  canCompare?: boolean;
+}) {
   const t = TONE[tone];
   return (
     <section className={`flex flex-wrap items-center justify-between gap-5 rounded-[20px] border px-6 py-6 sm:px-7 ${t.box}`}>
@@ -33,9 +43,11 @@ export function OutcomeBanner({ title, detail, tone }: { title: string; detail: 
           <RewindIcon />
           Rewind to checkpoint
         </Link>
-        <Link href="/compare" className="inline-flex min-h-12 items-center rounded-xl border border-bad px-5 font-semibold text-bad-fg hover:bg-bad/10">
-          Compare runs
-        </Link>
+        {canCompare && (
+          <Link href="/compare" className="inline-flex min-h-12 items-center rounded-xl border border-line-2 px-5 font-semibold text-fg hover:bg-chip">
+            Compare runs
+          </Link>
+        )}
       </div>
     </section>
   );
@@ -55,7 +67,7 @@ function markerFor(e: TimelineEvent) {
   const color =
     e.kind === "action" && e.label === "sleep_aid"
       ? "bg-bad"
-      : e.kind === "event" && e.label !== "intro"
+      : e.kind === "event" && e.label !== "patient_opens_up"
         ? "bg-warn"
         : (e.trustDelta ?? 0) < 0
           ? "bg-warn"
@@ -75,16 +87,33 @@ function detailFor(e: TimelineEvent): { text: string; className: string } | null
   return null;
 }
 
-export function DecisionTimeline({ timeline }: { timeline: TimelineEvent[] }) {
+const KEY_TURNS = new Set(["asked_SI_directly", "asked_plan", "asked_support"]);
+
+/** Real runs have many turns; keep the decision points (max ~10). */
+export function keyEvents(timeline: TimelineEvent[]): TimelineEvent[] {
+  const keep = timeline.filter(
+    (e) =>
+      e.kind !== "turn" ||
+      KEY_TURNS.has(e.label) ||
+      Math.abs(e.trustDelta ?? 0) >= 10,
+  );
+  if (keep.length <= 10) return keep;
+  // Too many: drop plain turns first, keep checkpoints/missed/events/actions.
+  const essential = keep.filter((e) => e.kind !== "turn");
+  return essential.length >= 10 ? essential.slice(0, 10) : keep.slice(0, 10);
+}
+
+export function DecisionTimeline({ timeline: fullTimeline }: { timeline: TimelineEvent[] }) {
+  const timeline = keyEvents(fullTimeline);
   return (
     <section aria-label="Decision timeline" className="flex flex-col gap-5 rounded-[20px] border border-line bg-panel px-6 py-6 sm:px-7">
       <h2 className="text-[13px] font-semibold tracking-widest text-muted">DECISION TIMELINE</h2>
       <div className="overflow-x-auto">
-        <div className="relative min-w-[900px] pt-2">
+        <div className="relative pt-2" style={{ minWidth: `${timeline.length * 140}px` }}>
         <div className="absolute left-6 right-6 top-[30px] h-0.5 bg-line" aria-hidden="true" />
         <ol
           className="relative grid gap-3"
-          style={{ gridTemplateColumns: `repeat(${timeline.length}, minmax(0, 1fr))` }}
+          style={{ gridTemplateColumns: `repeat(${timeline.length}, minmax(128px, 1fr))` }}
         >
           {timeline.map((e, i) => {
             const d = detailFor(e);
@@ -96,9 +125,7 @@ export function DecisionTimeline({ timeline }: { timeline: TimelineEvent[] }) {
                   {e.kind === "missed" ? "—" : formatTime(e.t)}
                   {isCheckpoint && " · CHECKPOINT"}
                 </div>
-                <div className="text-sm font-semibold">
-                  {isCheckpoint && e.quote ? `“${e.quote.split(".")[0]}”` : eventText(e.label)}
-                </div>
+                <div className="text-sm font-semibold">{eventText(e.label)}</div>
                 {d && <div className={`text-xs ${d.className}`}>{d.text}</div>}
               </li>
             );
@@ -204,14 +231,16 @@ export function DebriefView({
   branch,
   debrief,
   outcome,
+  canCompare = false,
 }: {
   branch: Branch;
   debrief: Debrief;
   outcome: { tone: OutcomeTone; detail: string };
+  canCompare?: boolean;
 }) {
   return (
     <div className="flex flex-col gap-6">
-      <OutcomeBanner title={debrief.outcome} detail={outcome.detail} tone={outcome.tone} />
+      <OutcomeBanner title={debrief.outcome} detail={outcome.detail} tone={outcome.tone} canCompare={canCompare} />
       <DecisionTimeline timeline={branch.timeline} />
       <div className="flex flex-wrap items-stretch gap-6">
         <RubricScores scores={debrief.scores} />

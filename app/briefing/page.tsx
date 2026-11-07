@@ -3,7 +3,11 @@ import { AppHeader } from "@/components/AppHeader";
 import { JordanAvatar } from "@/components/JordanAvatar";
 import { ContentNote, SafetyFooter } from "@/components/SafetyFooter";
 
-// TODO (after H8 merge): read patient + intake from Person A's data/scenario.jordan.json.
+import scenario from "@/data/scenario.jordan.json";
+
+// Patient identity comes from Person A's scenario file (import only). Intake is briefing-only copy.
+const { patient } = scenario;
+
 const INTAKE = [
   { label: "Reason", value: "Insomnia", tone: "text-fg" },
   { label: "Sleep", value: "3–4 h", tone: "text-warn font-mono" },
@@ -75,11 +79,9 @@ export default function BriefingPage() {
             <JordanAvatar emotion="withdrawn" size={160} className="shrink-0" />
             <div className="flex min-w-0 flex-[1_1_280px] flex-col gap-2.5">
               <h1 className="font-display text-[40px] font-bold leading-tight tracking-tight">
-                Jordan Lee, 34
+                {patient.name}, {patient.age}
               </h1>
-              <p className="text-xl italic text-fg-2">
-                &ldquo;I just need something to help me sleep.&rdquo;
-              </p>
+              <p className="text-xl italic text-fg-2">&ldquo;{patient.opening}&rdquo;</p>
               <p className="text-sm text-muted">
                 Logistics coordinator · came in alone · first visit to this clinic
               </p>
