@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { JordanAvatar } from "../../components/JordanAvatar";
 import type { Emotion } from "../../lib/types";
 
 export interface PatientPortraitProps {
@@ -74,33 +75,6 @@ export function PatientPortrait({
   const useFallbackSvg = Boolean(missingSlugs[meta.fileSlug]);
 
   const effectivePulse = isSpeaking ? Math.max(0.28, Math.min(1, audioLevel)) : 0;
-  const mouthOpen = 2 + Math.round(effectivePulse * 9);
-
-  // Facial geometry tweaks per emotion for the fallback clinical portrait
-  const browSlope =
-    emotion === "irritable"
-      ? 5
-      : emotion === "sad" || emotion === "tearful"
-        ? -5
-        : emotion === "withdrawn"
-          ? -2
-          : 0;
-
-  const eyeOpenHalf =
-    emotion === "withdrawn"
-      ? 2.2
-      : emotion === "sad" || emotion === "tearful"
-        ? 3.2
-        : 4;
-
-  const mouthCurve =
-    emotion === "relieved"
-      ? 5
-      : emotion === "sad" || emotion === "tearful"
-        ? -5
-        : emotion === "withdrawn" || emotion === "irritable"
-          ? -3
-          : -1;
 
   return (
     <div
@@ -116,7 +90,7 @@ export function PatientPortrait({
         />
       )}
 
-      <div className="relative mx-auto flex aspect-[4/3] w-full max-w-[260px] items-center justify-center overflow-hidden rounded-xl border border-white/10 bg-[#0D1526]">
+      <div className="relative mx-auto flex aspect-square w-full max-w-[224px] items-center justify-center overflow-hidden rounded-xl border border-white/10 bg-[#1A2640]">
         {!useFallbackSvg ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -134,154 +108,12 @@ export function PatientPortrait({
             }
           />
         ) : (
-          <svg
-            viewBox="0 0 220 180"
-            className="h-full w-full select-none"
-            role="img"
-            aria-label={`Jordan Lee expression: ${meta.label}`}
-          >
-            <defs>
-              <radialGradient id="roomGlow" cx="50%" cy="35%" r="65%">
-                <stop offset="0%" stopColor="#1E3354" stopOpacity="0.65" />
-                <stop offset="100%" stopColor="#0B1220" stopOpacity="1" />
-              </radialGradient>
-            </defs>
-            <rect width="220" height="180" fill="url(#roomGlow)" />
-
-            {/* Shoulders / hoodie */}
-            <path
-              d="M36 180 C44 136, 74 124, 110 124 C146 124, 176 136, 184 180 Z"
-              fill="#24344D"
-            />
-            <path
-              d="M84 125 L110 152 L136 125"
-              fill="none"
-              stroke="#182438"
-              strokeWidth="5"
-              strokeLinecap="round"
-            />
-
-            {/* Neck & head */}
-            <rect x="97" y="102" width="26" height="28" rx="10" fill="#C99A7B" />
-            <ellipse cx="110" cy="76" rx="34" ry="41" fill="#D7A98B" />
-
-            {/* Hair */}
-            <path
-              d="M75 72 C73 40, 92 27, 112 28 C133 29, 147 42, 145 72 C140 54, 128 46, 110 46 C91 46, 80 55, 75 72 Z"
-              fill="#1E2430"
-            />
-
-            {/* Under-eye fatigue circles */}
-            <path
-              d="M88 77 Q96 81 103 77"
-              fill="none"
-              stroke="#9C7158"
-              strokeWidth="1.6"
-              opacity="0.65"
-            />
-            <path
-              d="M117 77 Q124 81 132 77"
-              fill="none"
-              stroke="#9C7158"
-              strokeWidth="1.6"
-              opacity="0.65"
-            />
-
-            {/* Eyebrows */}
-            <line
-              x1="86"
-              y1={63 - browSlope}
-              x2="103"
-              y2={63 + browSlope}
-              stroke="#202632"
-              strokeWidth="2.6"
-              strokeLinecap="round"
-            />
-            <line
-              x1="117"
-              y1={63 + browSlope}
-              x2="134"
-              y2={63 - browSlope}
-              stroke="#202632"
-              strokeWidth="2.6"
-              strokeLinecap="round"
-            />
-
-            {/* Eyes */}
-            <ellipse
-              cx="95"
-              cy="72"
-              rx="5.5"
-              ry={eyeOpenHalf}
-              fill="#1B2230"
-            />
-            <ellipse
-              cx="125"
-              cy="72"
-              rx="5.5"
-              ry={eyeOpenHalf}
-              fill="#1B2230"
-            />
-            {emotion !== "withdrawn" && (
-              <>
-                <circle cx="96.5" cy="71" r="1.2" fill="#E6EDF7" />
-                <circle cx="126.5" cy="71" r="1.2" fill="#E6EDF7" />
-              </>
-            )}
-
-            {/* Tear glint when tearful */}
-            {emotion === "tearful" && (
-              <>
-                <ellipse
-                  cx="92"
-                  cy="81"
-                  rx="2"
-                  ry="3.4"
-                  fill="#7DD3FC"
-                  opacity="0.85"
-                />
-                <ellipse
-                  cx="128"
-                  cy="83"
-                  rx="1.8"
-                  ry="3"
-                  fill="#7DD3FC"
-                  opacity="0.75"
-                />
-              </>
-            )}
-
-            {/* Nose */}
-            <path
-              d="M110 73 L107 88 L113 89"
-              fill="none"
-              stroke="#AD7E61"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-
-            {/* Voice-driven mouth */}
-            {isSpeaking ? (
-              <ellipse
-                cx="110"
-                cy="101"
-                rx={7 + effectivePulse * 2}
-                ry={mouthOpen * 0.45}
-                fill="#5A2E2E"
-                stroke="#8C5347"
-                strokeWidth="1.5"
-              />
-            ) : (
-              <path
-                d={`M100 101 Q110 ${101 + mouthCurve} 120 101`}
-                fill="none"
-                stroke="#7D493E"
-                strokeWidth="2.4"
-                strokeLinecap="round"
-              />
-            )}
-          </svg>
+          <JordanAvatar
+            emotion={emotion}
+            talkLevel={effectivePulse}
+            size={224}
+            className="h-full w-full"
+          />
         )}
 
         {/* Voice waveform bars overlay when Jordan is speaking */}

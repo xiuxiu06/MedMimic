@@ -13,7 +13,12 @@ import {
   setStudentRisk,
 } from "../../../lib/engine";
 import { gemini } from "../../../lib/gemini";
-import { buildPatientPrompt } from "../../../lib/patientPrompt";
+import {
+  buildLiveDirectorCue,
+  buildPatientPrompt,
+  isOutOfCharacterOrNonEnglish,
+  sanitizePatientReply,
+} from "../../../lib/patientPrompt";
 import type {
   ActionId,
   Checkpoint,
@@ -48,7 +53,7 @@ export interface TurnRequestBody {
 }
 
 function toInteractionSteps(messages: readonly Message[]) {
-  return messages.map((msg) =>
+  const steps = messages.map((msg) =>
     msg.role === "student"
       ? {
           type: "user_input" as const,
@@ -59,6 +64,22 @@ function toInteractionSteps(messages: readonly Message[]) {
           content: [{ type: "text" as const, text: msg.text }],
         },
   );
+
+  // Ensure the turn sequence starts with a clinician user_input turn so the model
+  // never loses role polarity (user = clinician, model = patient Jordan Lee).
+  if (steps.length > 0 && steps[0].type === "model_output") {
+    steps.unshift({
+      type: "user_input" as const,
+      content: [
+        {
+          type: "text" as const,
+          text: "Hi Jordan, thanks for coming into the clinic today. What brings you in?",
+        },
+      ],
+    });
+  }
+
+  return steps;
 }
 
 async function generatePatientTextReply(
@@ -66,16 +87,20 @@ async function generatePatientTextReply(
   messagesWithStudentTurn: readonly Message[],
   state: EngineState,
 ): Promise<string> {
+  const baseSteps = toInteractionSteps(messagesWithStudentTurn);
+
   for (const model of resolveFastModelCandidates()) {
     try {
       const interaction = await gemini().interactions.create({
         model,
         system_instruction: systemInstruction,
-        input: toInteractionSteps(messagesWithStudentTurn),
+        input: baseSteps,
         store: false,
         generation_config: {
-          temperature: 0.6,
-          thinking_level: "minimal",
+          temperature: 0.55,
+          ...(model.startsWith("gemini-3")
+            ? { thinking_level: "minimal" as const }
+            : {}),
         },
         safety_settings: [
           { type: "dangerous_content", threshold: "block_only_high" },
@@ -85,8 +110,51 @@ async function generatePatientTextReply(
         ],
       });
 
-      const reply = interaction.output_text?.trim();
-      if (reply) return reply;
+      const raw = interaction.output_text?.trim();
+      if (!raw) continue;
+
+      const cleaned = sanitizePatientReply(raw);
+      if (cleaned && !isOutOfCharacterOrNonEnglish(cleaned)) {
+        return cleaned;
+      }
+
+      // If the model slipped into a disclaimer or non-English reply, retry once with an explicit correction step
+      const retryInteraction = await gemini().interactions.create({
+        model,
+        system_instruction: systemInstruction,
+        input: [
+          ...baseSteps,
+          {
+            type: "user_input" as const,
+            content: [
+              {
+                type: "text" as const,
+                text: "[DIRECTOR CUE FOR JORDAN: Stay strictly in first-person character ('I') as patient Jordan Lee speaking English (en-US) to the clinician examining you. Never give health disclaimers or advice. Reply naturally in 2–5 conversational sentences to what the clinician just said.]",
+              },
+            ],
+          },
+        ],
+        store: false,
+        generation_config: {
+          temperature: 0.4,
+          ...(model.startsWith("gemini-3")
+            ? { thinking_level: "minimal" as const }
+            : {}),
+        },
+        safety_settings: [
+          { type: "dangerous_content", threshold: "block_only_high" },
+          { type: "harassment", threshold: "block_only_high" },
+          { type: "hate_speech", threshold: "block_only_high" },
+          { type: "sexually_explicit", threshold: "block_only_high" },
+        ],
+      });
+
+      const retryCleaned = sanitizePatientReply(
+        retryInteraction.output_text?.trim() ?? "",
+      );
+      if (retryCleaned && !isOutOfCharacterOrNonEnglish(retryCleaned)) {
+        return retryCleaned;
+      }
     } catch {
       // Fallback to next candidate model on 503/429
     }
@@ -96,7 +164,7 @@ async function generatePatientTextReply(
   if (state.trust < 35) {
     return "Look, I'm just really tired. Is there anything you can give me to help me sleep?";
   }
-  return "Sorry, I lost my train of thought—I just haven't been sleeping at all lately.";
+  return "Yeah, I know—I'm completely exhausted. I just haven't been able to get more than two or three hours of sleep a night.";
 }
 
 export async function POST(request: Request) {
@@ -175,8 +243,12 @@ export async function POST(request: Request) {
         t: state.elapsedSec,
       });
 
-      // 3. Build strictly-gated patient prompt
+      // 3. Build strictly-gated patient prompt + compact Live director cue
       const patientPrompt = buildPatientPrompt(state, JORDAN_SCENARIO, {
+        newlyUnlocked,
+        turnEvents: newlyFiredEvents,
+      });
+      const liveDirectorCue = buildLiveDirectorCue(state, JORDAN_SCENARIO, {
         newlyUnlocked,
         turnEvents: newlyFiredEvents,
       });
@@ -212,6 +284,7 @@ export async function POST(request: Request) {
             t: state.elapsedSec,
             kind: "checkpoint",
             label: DEMO_CHECKPOINT_ID,
+            quote: "Everything's just… heavy.",
           });
           checkpoint = createCheckpoint(
             DEMO_CHECKPOINT_ID,
@@ -234,6 +307,7 @@ export async function POST(request: Request) {
         messages,
         patientReply,
         patientPrompt,
+        liveDirectorCue,
         shouldSaveCheckpoint,
         checkpoint,
         outcome: evaluateOutcome(state, timeline),

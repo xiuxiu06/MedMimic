@@ -61,7 +61,7 @@ export function resolveFastModelCandidates(): string[] {
     !configured ||
     configured.startsWith("TODO") ||
     configured === "gemini-flash-latest"
-      ? "gemini-3.8-flash"
+      ? "gemini-3.5-flash"
       : configured;
 
   return Array.from(
@@ -203,7 +203,9 @@ export async function classifyStudentTurn({
         store: false,
         generation_config: {
           temperature: 0,
-          thinking_level: "minimal",
+          ...(model.startsWith("gemini-3")
+            ? { thinking_level: "minimal" as const }
+            : {}),
         },
         response_format: {
           type: "text",
