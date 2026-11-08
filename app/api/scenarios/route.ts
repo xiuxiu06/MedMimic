@@ -1,4 +1,4 @@
-import { resolveFastModel } from "../../../lib/classifier";
+import { resolveFastModel, SLOW_REQUEST_OPTIONS } from "../../../lib/classifier";
 import { JORDAN_SCENARIO } from "../../../lib/engine";
 import { gemini } from "../../../lib/gemini";
 import { getCurrentUser } from "../../../lib/auth/currentUser";
@@ -199,7 +199,7 @@ export async function POST(request: Request) {
           mime_type: "application/json",
           schema: AI_SCENARIO_SCHEMA,
         },
-      });
+      }, SLOW_REQUEST_OPTIONS);
 
       const parsed = JSON.parse(interaction.output_text ?? "{}") as {
         title: string;

@@ -1,5 +1,7 @@
 import {
   classifyStudentTurn,
+  FAST_REQUEST_OPTIONS,
+  noteModelFailure,
   resolveFastModelCandidates,
 } from "../../../lib/classifier";
 import { createCheckpoint } from "../../../lib/checkpoints";
@@ -18,6 +20,7 @@ import {
   isOutOfCharacterOrNonEnglish,
   sanitizePatientReply,
 } from "../../../lib/patientPrompt";
+import { rateLimit } from "../../../lib/rateLimit";
 import { getScenario, type ScenarioV2 } from "../../../lib/scenarios";
 import type {
   ActionId,
@@ -118,7 +121,7 @@ async function generatePatientTextReply(
           { type: "hate_speech", threshold: "block_only_high" },
           { type: "sexually_explicit", threshold: "block_only_high" },
         ],
-      });
+      }, FAST_REQUEST_OPTIONS);
 
       const raw = interaction.output_text?.trim();
       if (!raw) continue;
@@ -157,7 +160,7 @@ async function generatePatientTextReply(
           { type: "hate_speech", threshold: "block_only_high" },
           { type: "sexually_explicit", threshold: "block_only_high" },
         ],
-      });
+      }, FAST_REQUEST_OPTIONS);
 
       const retryCleaned = sanitizePatientReply(
         retryInteraction.output_text?.trim() ?? "",
@@ -165,8 +168,9 @@ async function generatePatientTextReply(
       if (retryCleaned && !isOutOfCharacterOrNonEnglish(retryCleaned)) {
         return retryCleaned;
       }
-    } catch {
-      // Fallback to next candidate model on 503/429
+    } catch (err) {
+      // Fallback to next candidate model on 503/429 (and skip this one for a while)
+      noteModelFailure(model, err);
     }
   }
 
@@ -178,6 +182,8 @@ async function generatePatientTextReply(
 }
 
 export async function POST(request: Request) {
+  const limited = rateLimit(request, "turn");
+  if (limited) return limited;
   try {
     const body = (await request.json()) as TurnRequestBody;
     const activeScenario: ScenarioV2 =

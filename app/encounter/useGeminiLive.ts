@@ -319,6 +319,7 @@ export function useGeminiLive(callbacks: UseGeminiLiveCallbacks) {
           config: {
             responseModalities: [Modality.AUDIO],
             speechConfig: {
+              languageCode: "en-US",
               voiceConfig: {
                 prebuiltVoiceConfig: {
                   voiceName: selectedVoice,

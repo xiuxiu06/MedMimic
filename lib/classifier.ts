@@ -55,6 +55,35 @@ Label definitions:
 - "closed_rapid": Stacks 3+ rapid-fire closed yes/no checklist questions in a single turn or interrogates mechanically without rapport.
 - "other": Use ONLY when none of the specific labels above apply (e.g., simple greeting or logistical remark). Never pair "other" with specific labels.`;
 
+/**
+ * Per-request options for every `interactions.create` call. The SDK otherwise retries a
+ * 429 with backoff for ~33s before throwing, so one exhausted model (free tier: 20 req/day
+ * on gemini-3.5-flash) made every patient reply take over a minute. Fail fast, then fall
+ * through to the next candidate model.
+ */
+export const FAST_REQUEST_OPTIONS = { maxRetries: 0, timeout: 15_000 } as const;
+/** Larger structured generations (patient case JSON). */
+export const SLOW_REQUEST_OPTIONS = { maxRetries: 0, timeout: 45_000 } as const;
+
+// Models that just failed are skipped for a while (per server instance).
+const unavailableUntil = new Map<string, number>();
+const QUOTA_COOLDOWN_MS = 15 * 60_000;
+const ERROR_COOLDOWN_MS = 2 * 60_000;
+
+/** Call from a catch block: rate-limited / timed-out models get skipped for a while. */
+export function noteModelFailure(model: string, err: unknown): void {
+  const status = (err as { status?: number } | null)?.status;
+  const message = err instanceof Error ? err.message : String(err);
+  if (status === 429 || /\b429\b|rate limit|quota|RESOURCE_EXHAUSTED/i.test(message)) {
+    unavailableUntil.set(model, Date.now() + QUOTA_COOLDOWN_MS);
+  } else if (
+    (status !== undefined && status >= 500) ||
+    /timed out|timeout|aborted|\b50[034]\b|unavailable|overloaded/i.test(message)
+  ) {
+    unavailableUntil.set(model, Date.now() + ERROR_COOLDOWN_MS);
+  }
+}
+
 export function resolveFastModelCandidates(): string[] {
   const configured: string = MODELS.classifier;
   const primary =
@@ -64,7 +93,7 @@ export function resolveFastModelCandidates(): string[] {
       ? "gemini-3.5-flash"
       : configured;
 
-  return Array.from(
+  const all = Array.from(
     new Set([
       primary,
       "gemini-3.5-flash-lite",
@@ -72,6 +101,10 @@ export function resolveFastModelCandidates(): string[] {
       "gemini-flash-latest",
     ]),
   );
+  const now = Date.now();
+  const available = all.filter((m) => (unavailableUntil.get(m) ?? 0) <= now);
+  // If everything is cooling down, try them all anyway rather than giving up.
+  return available.length > 0 ? available : all;
 }
 
 export function resolveFastModel(): string {
@@ -227,15 +260,16 @@ export async function classifyStudentTurn({
           { type: "hate_speech", threshold: "block_only_high" },
           { type: "sexually_explicit", threshold: "block_only_high" },
         ],
-      });
+      }, FAST_REQUEST_OPTIONS);
 
       const rawText = interaction.output_text?.trim();
       if (rawText) {
         const parsed = JSON.parse(rawText) as { labels?: unknown };
         return sanitizeTurnLabels(parsed.labels);
       }
-    } catch {
-      // Try next candidate model on 503/429
+    } catch (err) {
+      // Try next candidate model on 503/429 (and skip this one for a while)
+      noteModelFailure(model, err);
     }
   }
 

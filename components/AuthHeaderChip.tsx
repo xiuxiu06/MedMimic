@@ -2,6 +2,9 @@
 
 import { useUser } from "@auth0/nextjs-auth0";
 import Link from "next/link";
+import { useEffect } from "react";
+import { claimLocalDataFor, clearLearnerLocalData } from "@/lib/localData";
+import { useMe } from "@/lib/useMe";
 
 const ROLES_CLAIM = "https://medmimic.app/roles"; // same as lib/auth0.ts ROLES_CLAIM
 
@@ -11,6 +14,15 @@ const chipBase =
 /** Header account chip (Auth0). Guests see "Sign in"; nothing in the app requires login. */
 export function AuthHeaderChip() {
   const { user, isLoading } = useUser();
+  const me = useMe();
+
+  // Local runs belong to whoever is signed in: a different account never sees them.
+  useEffect(() => {
+    if (user?.sub && claimLocalDataFor(user.sub)) window.location.reload();
+  }, [user?.sub]);
+
+  // Auth0 not configured (local dev without env): no login exists, so don't offer a 404 link.
+  if (me && !me.auth0Configured) return null;
 
   if (isLoading || !user) {
     return (
@@ -45,6 +57,8 @@ export function AuthHeaderChip() {
       </Link>
       <a
         href="/auth/logout"
+        // Signing out also wipes this browser's runs (they are already synced to the account).
+        onClick={clearLearnerLocalData}
         className={`${chipBase} border-line-2 bg-panel text-muted hover:bg-chip hover:text-fg`}
       >
         Sign out

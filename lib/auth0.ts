@@ -34,6 +34,14 @@ export const auth0: Auth0Client | null = isAuth0Configured
           },
         };
       },
+      // Supabase verifies the stored Auth0 ID token, which lives 10h (tenant setting) and is
+      // not refreshed. Cap the app session at the same 10h so a signed-in user never ends up
+      // with an expired token (silently failing cloud sync).
+      session: {
+        rolling: true,
+        absoluteDuration: 60 * 60 * 10,
+        inactivityDuration: 60 * 60 * 10,
+      },
       authorizationParameters: {
         // openid + profile + email are needed for the ID token we pass to Supabase.
         scope: "openid profile email",

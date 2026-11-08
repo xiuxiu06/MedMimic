@@ -2,6 +2,7 @@ import { createInitialEngineState } from "../../../lib/engine";
 import { gemini } from "../../../lib/gemini";
 import { MODELS } from "../../../lib/models";
 import { buildPatientPrompt } from "../../../lib/patientPrompt";
+import { rateLimit } from "../../../lib/rateLimit";
 import {
   getScenario,
   selectVoiceForPatient,
@@ -29,6 +30,8 @@ export interface LiveTokenRequestBody {
  * session to Gemini Live without ever exposing GEMINI_API_KEY client-side.
  */
 export async function POST(request: Request) {
+  const limited = rateLimit(request, "liveToken");
+  if (limited) return limited;
   try {
     let activeScenario = getScenario();
     let state: EngineState | undefined;
