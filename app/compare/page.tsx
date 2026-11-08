@@ -6,6 +6,7 @@ import { AppHeader } from "@/components/AppHeader";
 import { CompareView } from "@/components/compare/CompareView";
 import { SafetyFooter } from "@/components/SafetyFooter";
 import { mockRun1, mockRun2 } from "@/lib/mock/debrief";
+import { disclosureLabels, scenarioForCase } from "@/lib/activeScenario";
 import { isMockMode, loadRuns, runLabel } from "@/lib/runs";
 import type { Branch } from "@/lib/types";
 
@@ -49,6 +50,14 @@ function RunSelect({
   );
 }
 
+function comparePatient(caseId: string | undefined) {
+  const scenario = scenarioForCase(caseId);
+  return {
+    disclosureLabels: disclosureLabels(scenario),
+    checkpointWord: scenario.checkpoint?.keyword ?? "heavy",
+  };
+}
+
 export default function ComparePage() {
   const [runs, setRuns] = useState<Branch[] | null>(null);
   const [leftId, setLeftId] = useState<string | null>(null);
@@ -85,7 +94,7 @@ export default function ComparePage() {
           <section className="flex flex-col items-center gap-4 rounded-[20px] border border-line bg-panel px-6 py-16 text-center">
             <h1 className="font-display text-2xl font-bold">Nothing to compare yet</h1>
             <p className="max-w-md text-muted">
-              Finish a run, then rewind from the “heavy” checkpoint and try a different approach. Both runs will
+              Finish a run, then rewind from the checkpoint and try a different approach. Both runs will
               appear here side by side.
             </p>
             <Link href="/encounter" className="inline-flex min-h-11 items-center rounded-xl bg-ok px-6 font-bold text-[#062012]">
@@ -102,7 +111,13 @@ export default function ComparePage() {
                 <RunSelect label="Rewound" runs={runs} value={rightId} onChange={setRightId} />
               </div>
             )}
-            {left && right && <CompareView original={left} rewound={right} />}
+            {left && right && (
+              <CompareView
+                original={left}
+                rewound={right}
+                patient={comparePatient(left.caseId ?? right.caseId)}
+              />
+            )}
           </>
         )}
       </main>

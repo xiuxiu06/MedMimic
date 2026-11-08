@@ -65,6 +65,8 @@ export interface Checkpoint {
 
 export interface Branch {
   id: string;
+  /** Which patient this run was with (lib/scenarios id). Missing on older runs = Jordan. */
+  caseId?: string;
   parentCheckpoint?: string;
   timeline: TimelineEvent[];
   messages: Message[];

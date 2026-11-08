@@ -1,4 +1,12 @@
-import { resolveFastModelCandidates } from "../../../../lib/classifier";
+import { getCurrentUser, type CurrentUser } from "../../../../lib/auth/currentUser";
+import { isAuth0Configured } from "../../../../lib/auth0";
+import {
+  noteModelFailure,
+  resolveFastModelCandidates,
+  SLOW_REQUEST_OPTIONS,
+} from "../../../../lib/classifier";
+import { rateLimit } from "../../../../lib/rateLimit";
+import { getSupabaseServerClient } from "../../../../lib/supabase/server";
 import { gemini } from "../../../../lib/gemini";
 import {
   selectVoiceForPatient,
@@ -650,8 +658,67 @@ Every generated patient MUST:
    - If "guarded_tired": worn down, brief, quietly guarded.
 4. Write all 7 disclosure "fact" fields in second-person ("You...") instructions addressed directly to the patient actor, keeping each fact self-contained so the engine can unlock them one at a time.`;
 
+/**
+ * Publish an instructor-generated case to the class (Supabase `scenarios`, is_published).
+ * RLS only lets instructors publish. Returns the scenario with its cloudId, or null if the
+ * case could only be kept locally (guest mode / no Supabase / insert error).
+ */
+async function publishToClass(
+  scenario: ScenarioV2,
+  user: CurrentUser | null,
+  generationPrompt: string,
+  model: string,
+): Promise<ScenarioV2 | null> {
+  if (!user?.isInstructor) return null;
+  const supabase = await getSupabaseServerClient();
+  if (!supabase) return null;
+
+  const published: ScenarioV2 = { ...scenario, cloudId: scenario.id };
+  const { error } = await supabase.from("scenarios").insert({
+    id: scenario.id,
+    slug: scenario.id,
+    title: scenario.title.slice(0, 200),
+    specialty: "psychiatry",
+    difficulty: scenario.difficulty === "advanced" ? "advanced" : "intermediate",
+    patient_name: scenario.patient.name,
+    patient_age: Math.min(120, Math.max(1, Math.round(scenario.patient.age || 30))),
+    patient_gender: scenario.gender ?? "male",
+    voice_name: scenario.voiceName ?? "Achird",
+    chief_complaint: scenario.patient.opening,
+    scenario_json: published,
+    intake_json: scenario.briefing?.intake ?? [],
+    avatar_config: scenario.avatar ?? {},
+    is_ai_generated: true,
+    generation_prompt: generationPrompt.slice(0, 2000),
+    generation_model: model,
+    is_published: true,
+    created_by: user.id,
+  });
+  if (error) {
+    console.error("[patients/generate] publish failed:", error.message);
+    return null;
+  }
+  return published;
+}
+
 export async function POST(request: Request) {
   try {
+    // Auth0 RBAC: only instructors create cases (Gemini cost + every case learners see is reviewed).
+    const user = await getCurrentUser();
+    if (isAuth0Configured && !user?.isInstructor) {
+      return Response.json(
+        {
+          ok: false,
+          error: user
+            ? "Only instructors can generate new patients. Ask your course team for the instructor role."
+            : "Sign in as an instructor to generate new patients.",
+        },
+        { status: user ? 403 : 401 },
+      );
+    }
+    const limited = rateLimit(request, "generate", user?.id);
+    if (limited) return limited;
+
     const body = (await request.json().catch(() => ({}))) as GeneratePatientRequest;
     const customPrompt = body.prompt?.trim() ?? "";
     const avoidList = Array.from(
@@ -750,7 +817,7 @@ export async function POST(request: Request) {
             { type: "hate_speech", threshold: "block_only_high" },
             { type: "sexually_explicit", threshold: "block_only_high" },
           ],
-        });
+        }, SLOW_REQUEST_OPTIONS);
 
         const rawText = interaction.output_text?.trim();
         if (!rawText) continue;
@@ -766,13 +833,16 @@ export async function POST(request: Request) {
         }
 
         const scenario = buildScenarioV2FromGenerated(parsed, difficulty);
+        const published = await publishToClass(scenario, user, generationPrompt, model);
 
         return Response.json({
           ok: true,
-          scenario,
+          scenario: published ?? scenario,
+          publishedToClass: Boolean(published),
           modelUsed: model,
         });
       } catch (err) {
+        noteModelFailure(model, err);
         lastError = err instanceof Error ? err.message : String(err);
       }
     }

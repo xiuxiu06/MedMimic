@@ -2,6 +2,17 @@
 
 import type { EncounterSessionWithBranches } from "./types";
 import { rowToClientBranch } from "./types";
+import {
+  resetAllEncounterStorage,
+  saveActiveCaseId,
+  saveGeneratedScenario,
+} from "../../app/encounter/storage";
+import {
+  DEFAULT_CASE_ID,
+  isJordanCaseId,
+  isPlayableScenario,
+  type ScenarioV2,
+} from "../scenarios";
 import type { Branch, Checkpoint } from "../types";
 
 export const CLOUD_SESSION_STORAGE_KEY = "medmimic:cloudSessionId";
@@ -40,6 +51,8 @@ export function clearStoredCloudSessionId(): void {
 export async function syncCheckpointToCloud(
   checkpoint: Checkpoint,
   scenarioId: string = "jordan-lee-mvp",
+  /** Full payload for AI-generated patients so the server can register the case row. */
+  scenario?: ScenarioV2,
 ): Promise<void> {
   try {
     const res = await fetch("/api/sessions", {
@@ -48,6 +61,7 @@ export async function syncCheckpointToCloud(
       body: JSON.stringify({
         sessionId: getStoredCloudSessionId(),
         scenarioId,
+        scenario,
         checkpoint,
       }),
     });
@@ -67,6 +81,7 @@ export async function syncCompletedBranchToCloud(
   completedBranch: Branch,
   modeUsed: "text" | "voice" | "mixed" = "mixed",
   scenarioId: string = "jordan-lee-mvp",
+  scenario?: ScenarioV2,
 ): Promise<void> {
   try {
     const res = await fetch("/api/sessions", {
@@ -75,6 +90,7 @@ export async function syncCompletedBranchToCloud(
       body: JSON.stringify({
         sessionId: getStoredCloudSessionId(),
         scenarioId,
+        scenario,
         modeUsed,
         completedBranch,
       }),
@@ -100,10 +116,21 @@ export function hydrateLocalStorageFromCloudSession(
   const sortedRows = [...(session.encounter_branches ?? [])].sort((a, b) =>
     a.created_at.localeCompare(b.created_at),
   );
-  const branches = sortedRows.map(rowToClientBranch);
+  // Which patient these runs were with: AI cases carry their ScenarioV2 in scenario_json.
+  const rawScenario = session.scenarios?.scenario_json;
+  const scenario: ScenarioV2 | null = isPlayableScenario(rawScenario)
+    ? { ...rawScenario, cloudId: session.scenario_id }
+    : null;
+  const caseId = scenario && !isJordanCaseId(scenario.id) ? scenario.id : DEFAULT_CASE_ID;
+
+  const branches = sortedRows.map((row) => ({ ...rowToClientBranch(row), caseId }));
   if (branches.length === 0) return [];
 
   try {
+    // Start clean so another patient's active session / checkpoints never leak in.
+    resetAllEncounterStorage();
+    if (scenario && caseId !== DEFAULT_CASE_ID) saveGeneratedScenario(scenario);
+    saveActiveCaseId(caseId);
     window.localStorage.setItem("medmimic:branches", JSON.stringify(branches));
     window.localStorage.setItem(
       "medmimic:currentBranch",

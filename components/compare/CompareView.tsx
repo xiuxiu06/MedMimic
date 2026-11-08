@@ -53,7 +53,24 @@ function Stat({ label, value, className }: { label: string; value: string; class
   );
 }
 
-function RunCard({ title, run, other }: { title: string; run: Branch; other: Branch }) {
+export interface ComparePatient {
+  /** Disclosure id → label for this patient (generated patients reuse ids). */
+  disclosureLabels?: Record<string, string>;
+  /** The patient's checkpoint word, e.g. "heavy". */
+  checkpointWord?: string;
+}
+
+function RunCard({
+  title,
+  run,
+  other,
+  patient,
+}: {
+  title: string;
+  run: Branch;
+  other: Branch;
+  patient?: ComparePatient;
+}) {
   const s = summarize(run, other);
   const t = TONE[s.outcome.badge];
   return (
@@ -79,7 +96,7 @@ function RunCard({ title, run, other }: { title: string; run: Branch; other: Bra
             <ul className="flex flex-wrap gap-1.5">
               {s.onlyHere.map((id) => (
                 <li key={id} className="rounded-full bg-chip px-2.5 py-1 text-xs font-semibold text-fg">
-                  {disclosureText(id)}
+                  {disclosureText(id, patient?.disclosureLabels)}
                 </li>
               ))}
             </ul>
@@ -105,7 +122,7 @@ function takeaway(a: Branch, b: Branch): string {
   return parts.length ? `After the checkpoint, ${parts.join(" and ")}, and ${change}.` : `After the checkpoint, ${change}.`;
 }
 
-export function BranchDiagram({ a, b }: { a: Branch; b: Branch }) {
+export function BranchDiagram({ a, b, checkpointWord = "heavy" }: { a: Branch; b: Branch; checkpointWord?: string }) {
   const top = TONE[outcomeFor(b).badge].stroke;
   const bottom = TONE[outcomeFor(a).badge].stroke;
   return (
@@ -127,28 +144,37 @@ export function BranchDiagram({ a, b }: { a: Branch; b: Branch }) {
       </svg>
       <div className="mt-2 flex justify-between text-xs text-muted">
         <span>Start</span>
-        <span className="text-warn">Checkpoint: “heavy”</span>
+        <span className="text-warn">Checkpoint: “{checkpointWord}”</span>
         <span>Top: rewound run · Bottom: original run</span>
       </div>
     </section>
   );
 }
 
-export function CompareView({ original, rewound }: { original: Branch; rewound: Branch }) {
+export function CompareView({
+  original,
+  rewound,
+  patient,
+}: {
+  original: Branch;
+  rewound: Branch;
+  patient?: ComparePatient;
+}) {
+  const word = patient?.checkpointWord ?? "heavy";
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col items-center gap-1.5 text-center">
-        <div className="font-mono text-[13px] tracking-wider text-warn">BRANCHED AT THE “HEAVY” CHECKPOINT</div>
+        <div className="font-mono text-[13px] tracking-wider text-warn">BRANCHED AT THE “{word.toUpperCase()}” CHECKPOINT</div>
         <h1 className="font-display text-3xl font-bold tracking-tight sm:text-4xl">
           Same patient. One sentence. Different outcome.
         </h1>
       </div>
 
-      <BranchDiagram a={original} b={rewound} />
+      <BranchDiagram a={original} b={rewound} checkpointWord={word} />
 
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-        <RunCard title="Original run" run={original} other={rewound} />
-        <RunCard title="Rewound run" run={rewound} other={original} />
+        <RunCard title="Original run" run={original} other={rewound} patient={patient} />
+        <RunCard title="Rewound run" run={rewound} other={original} patient={patient} />
       </div>
 
       <section className="flex flex-wrap items-center justify-between gap-4 rounded-[20px] border border-line bg-panel px-6 py-5">

@@ -1,3 +1,4 @@
+import { rateLimit } from "@/lib/rateLimit";
 import { gemini } from "@/lib/gemini";
 import { eventText } from "@/lib/labels";
 import { MODELS } from "@/lib/models";
@@ -49,7 +50,14 @@ const FEEDBACK_SCHEMA = {
   required: ["feedback"],
 };
 
-function buildPrompt(branch: Branch, flags: FlaggedEvent[], passages: Record<string, GuidelineChunk[]>): string {
+const DEFAULT_PATIENT = "Jordan, 34, insomnia after job loss; hidden depression and suicidal thoughts";
+
+function buildPrompt(
+  branch: Branch,
+  flags: FlaggedEvent[],
+  passages: Record<string, GuidelineChunk[]>,
+  patient: string = DEFAULT_PATIENT,
+): string {
   const flagLines = flags.map((f, i) => {
     const e = branch.timeline[f.index];
     const ids = (passages[f.label] ?? []).map((c) => c.id).join(", ") || "none";
@@ -58,7 +66,7 @@ function buildPrompt(branch: Branch, flags: FlaggedEvent[], passages: Record<str
   const allChunks = [...new Map(Object.values(passages).flat().map((c) => [c.id, c])).values()];
   const passageText = allChunks.map((c) => `[${c.id}] ${c.source} — ${c.section}\n${c.text}`).join("\n\n");
 
-  return `You are a clinical skills tutor debriefing a student after a SIMULATED psychiatric interview with a fictional patient (Jordan, 34, insomnia after job loss; hidden depression and suicidal thoughts). Education only.
+  return `You are a clinical skills tutor debriefing a student after a SIMULATED psychiatric interview with a fictional patient (${patient}). Education only.
 
 Write one feedback item per FLAG below.
 Rules:
@@ -74,9 +82,15 @@ ${passageText}`;
 }
 
 export async function POST(request: Request) {
+  const limited = rateLimit(request, "debrief");
+  if (limited) return limited;
   let branch: Branch;
+  let patient: string | undefined;
   try {
-    branch = ((await request.json()) as { branch: Branch }).branch;
+    const body = (await request.json()) as { branch: Branch; patient?: unknown };
+    branch = body.branch;
+    // One-line patient summary from the client (AI-generated cases). Keep it short: it goes into the prompt.
+    if (typeof body.patient === "string" && body.patient.trim()) patient = body.patient.trim().slice(0, 300);
     if (!branch?.timeline || !branch?.finalState) throw new Error("missing branch");
   } catch {
     return Response.json({ error: "Body must be { branch: Branch }" }, { status: 400 });
@@ -96,11 +110,13 @@ export async function POST(request: Request) {
     try {
       const res = await gemini().models.generateContent({
         model: MODELS.debrief,
-        contents: buildPrompt(branch, flags, passages),
+        contents: buildPrompt(branch, flags, passages, patient),
         config: {
           responseMimeType: "application/json",
           responseJsonSchema: FEEDBACK_SCHEMA,
           temperature: 0.3,
+          // Fail fast (template feedback below still cites passages) instead of SDK retries.
+          httpOptions: { timeout: 20_000, retryOptions: { attempts: 1 } },
         },
       });
       const parsed = JSON.parse(res.text ?? "{}") as { feedback?: Generated };

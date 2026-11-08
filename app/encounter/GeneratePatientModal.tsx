@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useMe } from "../../lib/useMe";
 import {
   JORDAN_SCENARIO_V2,
   TEMPERAMENT_LABELS,
@@ -126,6 +127,9 @@ export function GeneratePatientModal({
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const [activePresetId, setActivePresetId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Auth0 RBAC: only instructors see the generator (the API enforces it too).
+  const me = useMe();
+  const canGenerate = me?.canGenerateCases ?? false;
 
   if (!open) return null;
 
@@ -207,6 +211,23 @@ export function GeneratePatientModal({
           </button>
         </div>
 
+        {!canGenerate && (
+          <div className="mt-4 rounded-xl border border-violet-400/30 bg-violet-950/30 px-4 py-3 text-xs text-violet-100">
+            <div className="font-mono text-[10px] tracking-widest text-violet-300">
+              INSTRUCTOR ONLY · AUTH0 RBAC
+            </div>
+            <p className="mt-1 leading-relaxed">
+              {me === null
+                ? "Checking your role…"
+                : me.user
+                  ? "Generating new patients with Gemini is limited to instructors. Pick a case your instructor shared below."
+                  : "Sign in as an instructor to generate new patients. You can practice any case below as a guest."}
+            </p>
+          </div>
+        )}
+
+        {canGenerate && (
+        <>
         {/* One-Click Presets */}
         <div className="mt-4">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-[#9AA8BF]">
@@ -343,6 +364,8 @@ export function GeneratePatientModal({
             </button>
           </div>
         </form>
+        </>
+        )}
 
         {/* Switch Between Existing / Previously Generated Patients */}
         <div className="mt-5">
@@ -378,6 +401,11 @@ export function GeneratePatientModal({
                       {!sc.isAiGenerated && (
                         <span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] text-[#9AA8BF]">
                           Default Case
+                        </span>
+                      )}
+                      {sc.cloudId && (
+                        <span className="rounded bg-violet-500/20 px-1.5 py-0.5 text-[10px] text-violet-200">
+                          Shared with class
                         </span>
                       )}
                     </div>

@@ -51,6 +51,24 @@ export interface ScenarioV2 extends Scenario {
     unsafeActions: ActionId[];
   };
   isAiGenerated?: boolean;
+  /** Supabase scenarios.id once an instructor has published this case to the class. */
+  cloudId?: string;
+}
+
+/** True for ScenarioV2 payloads the encounter can play (the old V1 generator lacks these). */
+export function isPlayableScenario(value: unknown): value is ScenarioV2 {
+  const s = value as Partial<ScenarioV2> | null;
+  return Boolean(
+    s &&
+      typeof s.id === "string" &&
+      s.patient?.name &&
+      s.patient?.opening &&
+      Array.isArray(s.disclosures) &&
+      s.disclosures.length > 0 &&
+      s.briefing?.intake &&
+      s.avatar &&
+      s.checkpoint?.id,
+  );
 }
 
 export interface CaseSummary {

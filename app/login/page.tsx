@@ -5,6 +5,19 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AppHeader } from "../../components/AppHeader";
 import { SafetyFooter } from "../../components/SafetyFooter";
+import { GeneratePatientModal } from "../encounter/GeneratePatientModal";
+import { loadCompletedBranches } from "../encounter/storage";
+import {
+  loadActiveScenario,
+  loadSelectableScenarios,
+  switchActiveScenario,
+} from "../../lib/activeScenario";
+import {
+  isPlayableScenario,
+  JORDAN_SCENARIO_V2,
+  type ScenarioV2,
+} from "../../lib/scenarios";
+import { clearLearnerLocalData } from "../../lib/localData";
 import { isSupabaseConfigured } from "../../lib/supabase/config";
 import { hydrateLocalStorageFromCloudSession } from "../../lib/supabase/sync";
 import type {
@@ -57,13 +70,10 @@ export default function LoginPage() {
   const [sessions, setSessions] = useState<EncounterSessionWithBranches[]>([]);
   const [scenarios, setScenarios] = useState<ScenarioRecord[]>([]);
 
-  // AI Case Generator state (for scaling to multi-patient scenarios)
-  const [aiPrompt, setAiPrompt] = useState("");
-  const [aiSpecialty, setAiSpecialty] = useState("psychiatry");
-  const [aiDifficulty, setAiDifficulty] = useState<
-    "beginner" | "intermediate" | "advanced"
-  >("intermediate");
-  const [isGeneratingCase, setIsGeneratingCase] = useState(false);
+  // Patient picker / Gemini case creation (instructors), shared with encounter + briefing
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerCases, setPickerCases] = useState<ScenarioV2[]>([]);
+  const [activeCaseId, setActiveCaseId] = useState<string>(JORDAN_SCENARIO_V2.id);
 
   const refreshDashboard = useCallback(async (showSpinner = false) => {
     if (showSpinner) {
@@ -129,51 +139,38 @@ export default function LoginPage() {
     }
   };
 
-  const handleGenerateAiScenario = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!aiPrompt.trim()) return;
-    setIsGeneratingCase(true);
-    setFeedbackMsg(null);
-    try {
-      const res = await fetch("/api/scenarios", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          generatePrompt: aiPrompt.trim(),
-          specialty: aiSpecialty,
-          difficulty: aiDifficulty,
-          isPublished: false,
-        }),
-      });
-      const data = (await res.json()) as {
-        ok?: boolean;
-        error?: string;
-        scenario?: ScenarioRecord;
-      };
-      if (!data.ok || !data.scenario) {
-        throw new Error(data.error ?? "Failed to generate scenario");
-      }
-      setScenarios((prev) => [
-        data.scenario!,
-        ...prev.filter((s) => s.id !== data.scenario!.id),
-      ]);
-      setAiPrompt("");
-      setFeedbackMsg({
-        tone: "ok",
-        text: `Generated & saved new patient scenario: ${data.scenario.patient_name}, ${data.scenario.patient_age}!`,
-      });
-    } catch (err) {
-      setFeedbackMsg({
-        tone: "bad",
-        text:
-          err instanceof Error
-            ? err.message
-            : "Could not generate patient scenario.",
-      });
-    } finally {
-      setIsGeneratingCase(false);
+  /** Make a case the active patient and go to its briefing. */
+  const practiceCase = (next: ScenarioV2) => {
+    if (
+      next.id !== loadActiveScenario().id &&
+      loadCompletedBranches().length > 0 &&
+      !window.confirm(
+        `Practice ${next.patient.name}? Your current local runs will be cleared (saved runs stay in your history).`,
+      )
+    ) {
+      return;
     }
+    switchActiveScenario(next);
+    router.push("/briefing");
   };
+
+  const openCasePicker = () => {
+    setActiveCaseId(loadActiveScenario().id);
+    void loadSelectableScenarios().then(setPickerCases);
+    setPickerOpen(true);
+  };
+
+  /** Playable cases in the catalog: Jordan + ScenarioV2 cases (old V1 rows can't run). */
+  const playableCases = useMemo(
+    () =>
+      scenarios.flatMap((row) => {
+        if (row.id === "jordan-lee-mvp") return [{ row, scenario: JORDAN_SCENARIO_V2 }];
+        return isPlayableScenario(row.scenario_json)
+          ? [{ row, scenario: { ...row.scenario_json, cloudId: row.id } }]
+          : [];
+      }),
+    [scenarios],
+  );
 
   const stats = useMemo(() => {
     let totalRuns = 0;
@@ -344,12 +341,16 @@ export default function LoginPage() {
                   </h1>
                   <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-muted">
                     <span>{authedEmail}</span>
-                    {profile?.training_role && (
+                    {(isInstructor || profile?.training_role) && (
                       <>
                         <span>·</span>
                         <span className="rounded-full bg-chip px-2.5 py-0.5 font-semibold text-fg-2">
-                          {ROLE_LABELS[profile.training_role] ??
-                            profile.training_role}
+                          {isInstructor
+                            ? ROLE_LABELS.instructor
+                            : profile?.training_role
+                              ? (ROLE_LABELS[profile.training_role] ??
+                                profile.training_role)
+                              : null}
                         </span>
                       </>
                     )}
@@ -372,6 +373,7 @@ export default function LoginPage() {
                 </Link>
                 <a
                   href="/auth/logout"
+                  onClick={clearLearnerLocalData}
                   className="inline-flex min-h-11 items-center rounded-xl border border-line-2 px-4 text-sm font-semibold text-muted hover:bg-chip hover:text-fg"
                 >
                   Sign Out
@@ -433,7 +435,7 @@ export default function LoginPage() {
                 <div className="rounded-2xl border border-line bg-ink px-6 py-10 text-center">
                   <p className="text-sm text-muted">
                     No completed encounter runs saved yet. Complete an interview
-                    with Jordan Lee and click{" "}
+                    and click{" "}
                     <strong className="text-fg">End Encounter</strong> to sync
                     your first run!
                   </p>
@@ -517,125 +519,65 @@ export default function LoginPage() {
               )}
             </section>
 
-            {/* Multi-Patient Catalog + AI Scenario Generator */}
+            {/* Case catalog (playable) + instructor case creation */}
             <section className="grid grid-cols-1 gap-6 lg:grid-cols-12">
               <div className="flex flex-col gap-4 rounded-[20px] border border-line bg-panel p-6 lg:col-span-7">
                 <div className="text-[13px] font-semibold tracking-widest text-muted">
-                  PATIENT SCENARIO CATALOG ({scenarios.length})
+                  CASES FOR YOUR CLASS ({playableCases.length})
                 </div>
                 <div className="flex flex-col gap-3">
-                  {scenarios.map((sc) => (
+                  {playableCases.map(({ row, scenario }) => (
                     <div
-                      key={sc.id}
+                      key={row.id}
                       className="flex items-start justify-between gap-3 rounded-2xl border border-line bg-ink px-4 py-3.5"
                     >
-                      <div>
+                      <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="font-semibold text-fg">
-                            {sc.patient_name}, {sc.patient_age}
+                            {scenario.patient.name}, {scenario.patient.age}
                           </span>
-                          <span className="rounded-full bg-chip px-2 py-0.5 text-[11px] text-muted capitalize">
-                            {sc.specialty.replace(/_/g, " ")} · {sc.difficulty}
+                          <span className="rounded-full bg-chip px-2 py-0.5 text-[11px] text-muted">
+                            {scenario.title}
                           </span>
-                          {sc.is_ai_generated && (
+                          {row.is_ai_generated && (
                             <span className="rounded-full bg-cite-bg px-2 py-0.5 text-[11px] font-semibold text-cite">
                               AI Generated
                             </span>
                           )}
                         </div>
                         <p className="mt-1 text-xs italic text-fg-2">
-                          &ldquo;{sc.chief_complaint}&rdquo;
+                          &ldquo;{scenario.patient.opening}&rdquo;
                         </p>
                       </div>
-                      {sc.id === "jordan-lee-mvp" && (
-                        <Link
-                          href="/briefing"
-                          className="shrink-0 rounded-lg bg-ok px-3 py-1.5 text-xs font-bold text-[#062012] hover:brightness-110"
-                        >
-                          Active MVP
-                        </Link>
-                      )}
+                      <button
+                        type="button"
+                        onClick={() => practiceCase(scenario)}
+                        className="shrink-0 rounded-lg bg-ok px-3 py-1.5 text-xs font-bold text-[#062012] hover:brightness-110 cursor-pointer"
+                      >
+                        Practice →
+                      </button>
                     </div>
                   ))}
                 </div>
               </div>
 
               {isInstructor ? (
-              <form
-                onSubmit={(e) => void handleGenerateAiScenario(e)}
-                className="flex flex-col gap-4 rounded-[20px] border border-line bg-panel p-6 lg:col-span-5"
-              >
-                <div>
-                  <div className="text-[13px] font-semibold tracking-widest text-cite">
-                    AI SCENARIO GENERATOR (BETA)
-                  </div>
-                  <p className="mt-1 text-xs text-muted">
-                    Generate a new trust-gated standardized patient with Gemini
-                    and store it in{" "}
-                    <code className="font-mono">public.scenarios</code>.
+                <section className="flex flex-col gap-3 rounded-[20px] border border-line bg-panel p-6 lg:col-span-5">
+                  <div className="font-mono text-xs tracking-widest text-cite">INSTRUCTOR · AUTH0 RBAC</div>
+                  <h2 className="font-display text-xl font-semibold">Create a case with Gemini</h2>
+                  <p className="text-sm leading-relaxed text-muted">
+                    Pick a temperament and presentation; Gemini writes the history, hidden
+                    disclosures, voice and avatar. Every case you create is shared with your
+                    class right away.
                   </p>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <label className="flex flex-col gap-1 text-xs text-muted">
-                    Specialty
-                    <select
-                      value={aiSpecialty}
-                      onChange={(e) => setAiSpecialty(e.target.value)}
-                      className="min-h-10 rounded-xl border border-line-2 bg-ink px-2.5 text-xs text-fg"
-                    >
-                      <option value="psychiatry">Psychiatry</option>
-                      <option value="primary_care">Primary Care</option>
-                      <option value="emergency_medicine">
-                        Emergency Medicine
-                      </option>
-                      <option value="adolescent_health">
-                        Adolescent Health
-                      </option>
-                    </select>
-                  </label>
-                  <label className="flex flex-col gap-1 text-xs text-muted">
-                    Difficulty
-                    <select
-                      value={aiDifficulty}
-                      onChange={(e) =>
-                        setAiDifficulty(
-                          e.target.value as
-                            | "beginner"
-                            | "intermediate"
-                            | "advanced",
-                        )
-                      }
-                      className="min-h-10 rounded-xl border border-line-2 bg-ink px-2.5 text-xs text-fg"
-                    >
-                      <option value="beginner">Beginner</option>
-                      <option value="intermediate">Intermediate</option>
-                      <option value="advanced">Advanced</option>
-                    </select>
-                  </label>
-                </div>
-
-                <label className="flex flex-col gap-1 text-xs text-muted">
-                  Case Brief for Gemini
-                  <textarea
-                    rows={3}
-                    value={aiPrompt}
-                    onChange={(e) => setAiPrompt(e.target.value)}
-                    placeholder="e.g., 58yo retired nurse presenting with palpitations and chest tightness, masking complicated grief and alcohol relapse after losing spouse..."
-                    className="rounded-xl border border-line-2 bg-ink p-3 text-xs text-fg placeholder:text-faint focus:border-info focus:outline-none"
-                  />
-                </label>
-
-                <button
-                  type="submit"
-                  disabled={!aiPrompt.trim() || isGeneratingCase}
-                  className="inline-flex min-h-10 items-center justify-center rounded-xl border border-line-2 bg-chip px-4 text-xs font-semibold text-fg hover:brightness-110 disabled:opacity-50 cursor-pointer"
-                >
-                  {isGeneratingCase
-                    ? "Generating Patient with Gemini…"
-                    : "✨ Generate & Save Patient Scenario"}
-                </button>
-              </form>
+                  <button
+                    type="button"
+                    onClick={openCasePicker}
+                    className="inline-flex min-h-11 w-fit items-center rounded-xl bg-ok px-5 text-sm font-bold text-[#062012] hover:brightness-110 cursor-pointer"
+                  >
+                    ✨ Create a patient
+                  </button>
+                </section>
               ) : (
                 <section className="flex flex-col gap-3 rounded-[20px] border border-line bg-panel p-6 lg:col-span-5">
                   <div className="font-mono text-xs tracking-widest text-cite">INSTRUCTOR ONLY · AUTH0 RBAC</div>
@@ -647,6 +589,24 @@ export default function LoginPage() {
                 </section>
               )}
             </section>
+
+            <GeneratePatientModal
+              open={pickerOpen}
+              onClose={() => setPickerOpen(false)}
+              activeScenarioId={activeCaseId}
+              savedScenarios={pickerCases}
+              onSelectScenario={practiceCase}
+              onGeneratedScenario={(created) => {
+                setFeedbackMsg({
+                  tone: "ok",
+                  text: created.cloudId
+                    ? `${created.patient.name} is ready and shared with your class.`
+                    : `${created.patient.name} is ready (saved on this device only).`,
+                });
+                void refreshDashboard(false);
+                practiceCase(created);
+              }}
+            />
           </div>
         )}
       </main>

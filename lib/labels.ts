@@ -57,8 +57,12 @@ const DISCLOSURE_TEXT: Record<string, string> = {
   protective_factors: "Protective factors",
 };
 
-export function disclosureText(id: string): string {
-  return DISCLOSURE_TEXT[id] ?? id.replace(/_/g, " ");
+/**
+ * Generated patients reuse the same disclosure ids with different meanings
+ * (e.g. job_loss = "Divorce"), so pass that patient's label map when it isn't Jordan.
+ */
+export function disclosureText(id: string, labels?: Record<string, string>): string {
+  return labels?.[id] ?? DISCLOSURE_TEXT[id] ?? id.replace(/_/g, " ");
 }
 
 export const TOTAL_DISCLOSURES = Object.keys(DISCLOSURE_TEXT).length;

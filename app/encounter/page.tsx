@@ -20,11 +20,9 @@ import {
   applyStudentAction,
   createInitialEngineState,
   DEMO_CHECKPOINT_ID,
-  DISCLOSURE_LABELS,
   ENGINE_EVENTS,
   evaluateOutcome,
   getEncounterHints,
-  JORDAN_SCENARIO,
   setStudentRisk,
   type EncounterOutcome,
 } from "../../lib/engine";
@@ -38,13 +36,29 @@ import type {
   TimelineEvent,
   TurnLabel,
 } from "../../lib/types";
+import {
+  cloudScenarioId,
+  disclosureLabels,
+  firstName,
+  loadActiveScenario,
+  loadSelectableScenarios,
+  switchActiveScenario,
+} from "../../lib/activeScenario";
+import {
+  isJordanCaseId,
+  JORDAN_SCENARIO_V2,
+  type ScenarioV2,
+} from "../../lib/scenarios";
+import { GeneratePatientModal } from "./GeneratePatientModal";
 import { PatientPortrait } from "./PatientPortrait";
 import {
   clearActiveSession,
   loadActiveSession,
   loadCheckpoints,
   loadCompletedBranches,
+  loadGeneratedScenarios,
   resetAllEncounterStorage,
+  saveGeneratedScenario,
   saveActiveSession,
   saveCheckpointItem,
   saveCompletedBranch,
@@ -151,13 +165,42 @@ interface RewindApiResponse {
   patientPrompt: string;
 }
 
-function createDefaultMessages(): Message[] {
-  return [{ role: "patient", text: JORDAN_SCENARIO.patient.opening, t: 0 }];
+function createDefaultMessages(
+  scenario: ScenarioV2 = JORDAN_SCENARIO_V2,
+): Message[] {
+  return [{ role: "patient", text: scenario.patient.opening, t: 0 }];
+}
+
+/** Runs saved before multi-patient have no caseId and belong to Jordan. */
+function isSameCase(a: string | null | undefined, b: string | null | undefined) {
+  return (isJordanCaseId(a) && isJordanCaseId(b)) || a === b;
+}
+
+/** Self-reported PHQ-9 total: Jordan's scripted 19, a stable 15–22 for other patients. */
+function phq9ScoreFor(scenario: ScenarioV2): number {
+  if (isJordanCaseId(scenario.id)) return 19;
+  let h = 0;
+  for (const ch of scenario.id) h = (h * 31 + ch.charCodeAt(0)) | 0;
+  return 15 + (Math.abs(h) % 8);
+}
+
+function checkpointKeywordRegex(scenario: ScenarioV2): RegExp {
+  const kw = (scenario.checkpoint?.keyword ?? "heavy").replace(
+    /[.*+?^${}()|[\]\\]/g,
+    "\\$&",
+  );
+  return new RegExp(`\\b${kw}\\b`, "i");
 }
 
 function EncounterWorkspace() {
   const searchParams = useSearchParams();
   const rewindParam = searchParams.get("rewind");
+
+  // Active patient (Jordan or an AI-generated case from localStorage)
+  const [scenario, setScenario] = useState<ScenarioV2>(JORDAN_SCENARIO_V2);
+  const scenarioRef = useRef<ScenarioV2>(JORDAN_SCENARIO_V2);
+  const [savedScenarios, setSavedScenarios] = useState<ScenarioV2[]>([]);
+  const [patientPickerOpen, setPatientPickerOpen] = useState(false);
 
   const [branchId, setBranchId] = useState<string>("run-1");
   const [parentCheckpoint, setParentCheckpoint] = useState<string | undefined>(
@@ -217,9 +260,19 @@ function EncounterWorkspace() {
     if (hydratedRef.current) return;
     hydratedRef.current = true;
 
+    const activeScenario = loadActiveScenario();
+    scenarioRef.current = activeScenario;
+    const generatedScenarios = loadGeneratedScenarios();
+
     const savedCheckpoints = loadCheckpoints();
-    const savedBranches = loadCompletedBranches();
-    const savedActive = loadActiveSession();
+    const savedBranches = loadCompletedBranches().filter((b) =>
+      isSameCase(b.caseId, activeScenario.id),
+    );
+    const savedActiveRaw = loadActiveSession();
+    const savedActive =
+      savedActiveRaw && isSameCase(savedActiveRaw.caseId, activeScenario.id)
+        ? savedActiveRaw
+        : null;
 
     const shouldAutoRestoreAfterCompletedRun =
       !savedActive && savedBranches.length > 0 && savedCheckpoints.length > 0;
@@ -243,6 +296,8 @@ function EncounterWorkspace() {
         matchingBranch?.timeline ?? savedActive?.timeline ?? [];
       const nextId = `run-${savedBranches.length + 1}`;
       queueMicrotask(() => {
+        setScenario(activeScenario);
+        setSavedScenarios(generatedScenarios);
         setCheckpoints(savedCheckpoints);
         setCompletedBranches(savedBranches);
         setBranchId(nextId);
@@ -264,6 +319,8 @@ function EncounterWorkspace() {
     }
 
     queueMicrotask(() => {
+      setScenario(activeScenario);
+      setSavedScenarios(generatedScenarios);
       if (savedCheckpoints.length > 0) setCheckpoints(savedCheckpoints);
       if (savedBranches.length > 0) setCompletedBranches(savedBranches);
       if (savedActive) {
@@ -272,10 +329,15 @@ function EncounterWorkspace() {
         setEngineState(savedActive.state);
         setMessages(savedActive.messages);
         setTimeline(savedActive.timeline);
-      } else if (savedBranches.length > 0) {
-        // Returning after a completed run that ended before any checkpoint was reached:
-        // start a fresh run ID so we never overwrite run-1.
-        setBranchId(`run-${savedBranches.length + 1}`);
+      } else {
+        // Fresh run with the active patient's opening line and starting trust/emotion
+        setEngineState(createInitialEngineState(activeScenario));
+        setMessages(createDefaultMessages(activeScenario));
+        if (savedBranches.length > 0) {
+          // Returning after a completed run that ended before any checkpoint was reached:
+          // start a fresh run ID so we never overwrite run-1.
+          setBranchId(`run-${savedBranches.length + 1}`);
+        }
       }
     });
   }, [rewindParam]);
@@ -284,6 +346,7 @@ function EncounterWorkspace() {
   useEffect(() => {
     if (!hydratedRef.current || endedSummary) return;
     saveActiveSession({
+      caseId: scenario.id,
       branchId,
       parentCheckpoint,
       state: engineState,
@@ -291,7 +354,7 @@ function EncounterWorkspace() {
       timeline,
       updatedAt: Date.now(),
     });
-  }, [branchId, parentCheckpoint, engineState, messages, timeline, endedSummary]);
+  }, [branchId, parentCheckpoint, engineState, messages, timeline, endedSummary, scenario]);
 
   // Elapsed encounter timer (1s tick while encounter is open)
   useEffect(() => {
@@ -353,6 +416,8 @@ function EncounterWorkspace() {
           messages: prevMessages,
           timeline: timelineRef.current,
           elapsedSec: elapsedRef.current,
+          caseId: scenarioRef.current.id,
+          scenario: scenarioRef.current,
         }),
       });
       const data = (await res.json()) as TurnApiResponse;
@@ -379,7 +444,7 @@ function EncounterWorkspace() {
           );
           const updated = saveCheckpointItem(cp);
           setCheckpoints(updated);
-          void syncCheckpointToCloud(cp, JORDAN_SCENARIO.id);
+          void syncCheckpointToCloud(cp, cloudScenarioId(scenarioRef.current), scenarioRef.current);
         } else {
           pendingVoiceCheckpointRef.current = data.shouldSaveCheckpoint.id;
         }
@@ -406,11 +471,13 @@ function EncounterWorkspace() {
     messagesRef.current = nextMsgs;
     setMessages(nextMsgs);
 
-    // Save voice-mode checkpoint once low_mood / "heavy" is unlocked and Jordan's reply lands
+    // Save voice-mode checkpoint once the patient's checkpoint disclosure is unlocked and their reply lands
     const shouldSaveId =
       pendingVoiceCheckpointRef.current ??
-      (/\bheavy\b/i.test(finalTranscript) &&
-      stateRef.current.unlocked.includes("low_mood")
+      (checkpointKeywordRegex(scenarioRef.current).test(finalTranscript) &&
+      stateRef.current.unlocked.includes(
+        scenarioRef.current.checkpoint?.whenUnlocked ?? "low_mood",
+      )
         ? DEMO_CHECKPOINT_ID
         : null);
 
@@ -424,7 +491,7 @@ function EncounterWorkspace() {
       );
       const updated = saveCheckpointItem(cp);
       setCheckpoints(updated);
-      void syncCheckpointToCloud(cp, JORDAN_SCENARIO.id);
+      void syncCheckpointToCloud(cp, cloudScenarioId(scenarioRef.current), scenarioRef.current);
     }
   }, []);
 
@@ -474,6 +541,8 @@ function EncounterWorkspace() {
             messages: priorMessages,
             timeline,
             elapsedSec: engineState.elapsedSec,
+            caseId: scenarioRef.current.id,
+            scenario: scenarioRef.current,
           }),
         });
 
@@ -508,7 +577,7 @@ function EncounterWorkspace() {
           if (data.checkpoint) {
             const updatedCps = saveCheckpointItem(data.checkpoint);
             setCheckpoints(updatedCps);
-            void syncCheckpointToCloud(data.checkpoint, JORDAN_SCENARIO.id);
+            void syncCheckpointToCloud(data.checkpoint, cloudScenarioId(scenarioRef.current), scenarioRef.current);
           }
         }
       } catch (err) {
@@ -544,6 +613,7 @@ function EncounterWorkspace() {
         timeline,
         action,
         engineState.elapsedSec,
+        scenarioRef.current,
       );
       setEngineState(result.state);
       setTimeline(result.timeline);
@@ -572,7 +642,7 @@ function EncounterWorkspace() {
     const cp = createCheckpoint(id, engineState, messages, nextTimeline.length);
     const updated = saveCheckpointItem(cp);
     setCheckpoints(updated);
-    void syncCheckpointToCloud(cp, JORDAN_SCENARIO.id);
+    void syncCheckpointToCloud(cp, cloudScenarioId(scenarioRef.current), scenarioRef.current);
   }, [checkpoints, engineState, messages, timeline]);
 
   const handleRewind = useCallback(
@@ -617,6 +687,8 @@ function EncounterWorkspace() {
                   },
                 }),
             nextBranchId: `run-${nextRunNumber}`,
+            caseId: scenarioRef.current.id,
+            scenario: scenarioRef.current,
           }),
         });
 
@@ -626,12 +698,16 @@ function EncounterWorkspace() {
         }
 
         if (data.completedBranch) {
-          const allBranches = saveCompletedBranch(data.completedBranch);
+          const completed: Branch = {
+            ...data.completedBranch,
+            caseId: scenarioRef.current.id,
+          };
+          const allBranches = saveCompletedBranch(completed);
           setCompletedBranches(allBranches);
           void syncCompletedBranchToCloud(
-            data.completedBranch,
+            completed,
             wasLiveConnected ? "voice" : "text",
-            JORDAN_SCENARIO.id,
+            cloudScenarioId(scenarioRef.current), scenarioRef.current,
           );
         }
 
@@ -648,6 +724,7 @@ function EncounterWorkspace() {
           await live.connect(
             data.restored.engineState,
             data.restored.messages,
+            scenarioRef.current,
           );
         }
       } catch (err) {
@@ -672,13 +749,16 @@ function EncounterWorkspace() {
     if (wasVoice) {
       live.disconnect();
     }
-    const branch = finalizeBranch({
-      id: branchId,
-      parentCheckpoint,
-      engineState,
-      messages,
-      timeline,
-    });
+    const branch: Branch = {
+      ...finalizeBranch({
+        id: branchId,
+        parentCheckpoint,
+        engineState,
+        messages,
+        timeline,
+      }),
+      caseId: scenarioRef.current.id,
+    };
     const outcome = evaluateOutcome(branch.finalState, branch.timeline);
     const updatedBranches = saveCompletedBranch(branch);
     clearActiveSession();
@@ -687,7 +767,7 @@ function EncounterWorkspace() {
     void syncCompletedBranchToCloud(
       branch,
       wasVoice ? "voice" : "text",
-      JORDAN_SCENARIO.id,
+      cloudScenarioId(scenarioRef.current), scenarioRef.current,
     );
   }, [branchId, engineState, live, messages, parentCheckpoint, timeline]);
 
@@ -696,8 +776,8 @@ function EncounterWorkspace() {
     resetAllEncounterStorage();
     setBranchId("run-1");
     setParentCheckpoint(undefined);
-    setEngineState(createInitialEngineState());
-    setMessages(createDefaultMessages());
+    setEngineState(createInitialEngineState(scenarioRef.current));
+    setMessages(createDefaultMessages(scenarioRef.current));
     setTimeline([]);
     setCheckpoints([]);
     setCompletedBranches([]);
@@ -706,7 +786,57 @@ function EncounterWorkspace() {
     setUiError(null);
   }, [live]);
 
-  const hints = useMemo(() => getEncounterHints(engineState), [engineState]);
+  // Switch to another (or newly generated) patient: each patient keeps its own set of runs
+  const handleSwitchPatient = useCallback(
+    (next: ScenarioV2) => {
+      if (next.id === scenarioRef.current.id) return;
+      const hasProgress =
+        completedBranches.length > 0 || messagesRef.current.length > 1;
+      if (
+        hasProgress &&
+        !window.confirm(
+          `Switch to ${next.patient.name}? This clears the current runs and checkpoints for ${scenarioRef.current.patient.name}.`,
+        )
+      ) {
+        if (!isJordanCaseId(next.id)) {
+          // Keep a freshly generated patient in the list even if the learner stays put
+          saveGeneratedScenario(next);
+          void loadSelectableScenarios().then(setSavedScenarios);
+        }
+        return;
+      }
+
+      switchActiveScenario(next);
+      live.disconnect();
+      scenarioRef.current = next;
+      pendingVoiceCheckpointRef.current = null;
+      setScenario(next);
+      void loadSelectableScenarios().then(setSavedScenarios);
+      setBranchId("run-1");
+      setParentCheckpoint(undefined);
+      setEngineState(createInitialEngineState(next));
+      setMessages(createDefaultMessages(next));
+      setTimeline([]);
+      setCheckpoints([]);
+      setCompletedBranches([]);
+      setLastTurnFeedback(null);
+      setEndedSummary(null);
+      setUiError(null);
+      setVoiceStreamingReply("");
+    },
+    [completedBranches.length, live],
+  );
+
+  const hints = useMemo(
+    () => getEncounterHints(engineState, scenario),
+    [engineState, scenario],
+  );
+  const labelMap = useMemo(() => disclosureLabels(scenario), [scenario]);
+  const patientFirst = firstName(scenario);
+  const phq9Score = useMemo(() => phq9ScoreFor(scenario), [scenario]);
+  const checkpointWord = scenario.checkpoint?.keyword ?? "heavy";
+  const checkpointQuote =
+    scenario.checkpoint?.quote ?? "Everything's just… heavy.";
   const primaryCheckpoint =
     checkpoints.find((c) => c.id === DEMO_CHECKPOINT_ID) ??
     checkpoints[checkpoints.length - 1];
@@ -743,6 +873,22 @@ function EncounterWorkspace() {
               <span>· {formatDuration(engineState.elapsedSec)}</span>
             </span>
 
+            {/* Patient switcher (Jordan + AI-generated cases) */}
+            <button
+              type="button"
+              onClick={() => {
+                setSavedScenarios(loadGeneratedScenarios());
+                // Add cases the instructor shared with the class (Supabase)
+                void loadSelectableScenarios().then(setSavedScenarios);
+                setPatientPickerOpen(true);
+              }}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-white/15 bg-[#131E35] px-2.5 py-1.5 text-xs font-medium text-[#E6EDF7] hover:border-white/30 transition-colors cursor-pointer"
+              title="Choose another patient or generate a new one"
+            >
+              <span className="max-w-[10rem] truncate">{scenario.patient.name}</span>
+              <span className="text-[#9AA8BF]">· Switch patient</span>
+            </button>
+
             {/* Gemini Live Voice Toggle */}
             {live.status === "connected" ? (
               <button
@@ -758,7 +904,7 @@ function EncounterWorkspace() {
               <button
                 type="button"
                 disabled={live.status === "connecting"}
-                onClick={() => void live.connect(engineState, messages)}
+                onClick={() => void live.connect(engineState, messages, scenario)}
                 className="inline-flex items-center gap-2 rounded-lg border border-sky-400/30 bg-[#13203B] px-3 py-1.5 text-xs font-medium text-sky-200 hover:bg-[#192B4E] disabled:opacity-50 transition-colors cursor-pointer"
               >
                 <span className="h-2 w-2 rounded-full bg-sky-400/70" />
@@ -809,6 +955,7 @@ function EncounterWorkspace() {
           <PatientPortrait
             emotion={engineState.emotion}
             trust={engineState.trust}
+            scenario={scenario}
             isSpeaking={live.isSpeaking || textSpeechPulse}
             audioLevel={live.isSpeaking ? live.audioLevel : textSpeechPulse ? 0.45 : 0}
           />
@@ -873,12 +1020,12 @@ function EncounterWorkspace() {
                 Clinical Disclosures
               </h2>
               <span className="font-mono text-xs text-sky-300">
-                {engineState.unlocked.length} / {JORDAN_SCENARIO.disclosures.length}
+                {engineState.unlocked.length} / {scenario.disclosures.length}
               </span>
             </div>
 
             <ul className="mt-3 space-y-2">
-              {JORDAN_SCENARIO.disclosures.map((d) => {
+              {scenario.disclosures.map((d) => {
                 const isUnlocked = engineState.unlocked.includes(d.id);
                 const isJustUnlocked =
                   lastTurnFeedback?.newlyUnlocked.includes(d.id) ?? false;
@@ -905,7 +1052,7 @@ function EncounterWorkspace() {
                     </span>
                     <span className="truncate font-medium">
                       {isUnlocked
-                        ? DISCLOSURE_LABELS[d.id] ?? d.id
+                        ? labelMap[d.id] ?? d.id
                         : "??? · locked"}
                     </span>
                   </li>
@@ -922,7 +1069,8 @@ function EncounterWorkspace() {
             <div className="flex items-center justify-between gap-3 border-b border-white/10 bg-[#16233D] px-4 py-2 text-xs text-[#B8C7E0]">
               <span>
                 <strong className="text-sky-300">Content note:</strong> Fictional
-                psychiatric interview depicting depression &amp; suicidal ideation.
+                psychiatric interview depicting{" "}
+                {(scenario.contentNote || "depression & suicidal ideation").toLowerCase()}.
               </span>
               <button
                 type="button"
@@ -940,7 +1088,7 @@ function EncounterWorkspace() {
             engineState.trust < 35 && (
               <div className="border-b border-rose-500/30 bg-rose-950/50 px-4 py-2 text-xs text-rose-200">
                 ⚠ <strong>Patient shutting down:</strong> Trust fell below 35%.
-                Jordan has become guarded and flat—consider empathetic reflection
+                {patientFirst} has become guarded and flat—consider empathetic reflection
                 or rewinding to your checkpoint.
               </div>
             )}
@@ -961,7 +1109,7 @@ function EncounterWorkspace() {
                   >
                     <div className="mb-1 flex items-center gap-2 px-1 text-[11px] text-[#8593AA]">
                       <span className="font-medium">
-                        {isStudent ? "You (Clinician)" : "Jordan Lee"}
+                        {isStudent ? "You (Clinician)" : scenario.patient.name}
                       </span>
                       <span className="font-mono">{formatDuration(msg.t)}</span>
                     </div>
@@ -980,7 +1128,7 @@ function EncounterWorkspace() {
                     <div className="flex items-center justify-between gap-2 rounded-xl border border-violet-400/35 bg-violet-950/35 px-3 py-2 text-xs text-violet-200">
                       <span>
                         ⚑ <strong>Checkpoint saved:</strong> Critical moment
-                        (&ldquo;Everything&apos;s just… heavy.&rdquo;)
+                        (&ldquo;{checkpointQuote}&rdquo;)
                       </span>
                       <button
                         type="button"
@@ -1011,7 +1159,7 @@ function EncounterWorkspace() {
             {voiceStreamingReply && (
               <div className="flex flex-col items-start">
                 <span className="mb-1 px-1 text-[11px] text-emerald-300">
-                  Jordan Lee · Live · Gemini
+                  {scenario.patient.name} · Live · Gemini
                 </span>
                 <div className="max-w-[86%] rounded-2xl border border-emerald-400/30 bg-[#182642] px-4 py-2.5 text-sm text-[#E6EDF7]">
                   {voiceStreamingReply}
@@ -1022,7 +1170,7 @@ function EncounterWorkspace() {
             {isSubmitting && !voiceStreamingReply && (
               <div className="flex items-center gap-2 text-xs text-[#8593AA] px-1">
                 <span className="h-2 w-2 rounded-full bg-sky-400 animate-ping" />
-                <span>Jordan is responding…</span>
+                <span>{patientFirst} is responding…</span>
               </div>
             )}
 
@@ -1143,8 +1291,8 @@ function EncounterWorkspace() {
                 disabled={isSubmitting}
                 placeholder={
                   live.status === "connected"
-                    ? "Hold to Talk above, or type a question for Jordan to answer aloud…"
-                    : "Interview Jordan (e.g., ask about sleep onset, mood, support, safety)…"
+                    ? `Hold to Talk above, or type a question for ${patientFirst} to answer aloud…`
+                    : `Interview ${patientFirst} (e.g., ask about onset, mood, support, safety)…`
                 }
                 className="flex-1 rounded-xl border border-white/15 bg-[#0B1220] px-3.5 py-2.5 text-sm text-[#E6EDF7] placeholder-[#697892] focus:border-sky-400 focus:outline-none disabled:opacity-50"
               />
@@ -1172,7 +1320,7 @@ function EncounterWorkspace() {
               )}
             </div>
             <p className="mt-1 text-xs text-[#8593AA]">
-              Select your clinical estimate of Jordan&apos;s acute suicide risk
+              Select your clinical estimate of {patientFirst}&apos;s acute suicide risk
               before ending the encounter.
             </p>
 
@@ -1280,8 +1428,9 @@ function EncounterWorkspace() {
                     </div>
                     {act === "phq9" && (
                       <div className="mt-1 text-[11px] text-[#B8C7E0]">
-                        Score: 19/27 (Moderately severe depressive symptoms;
-                        Item 9 requires direct verbal follow-up).
+                        Score: {phq9Score}/27 (
+                        {phq9Score >= 20 ? "Severe" : "Moderately severe"} depressive
+                        symptoms; Item 9 requires direct verbal follow-up).
                       </div>
                     )}
                     {act === "cssrs" && (
@@ -1309,8 +1458,8 @@ function EncounterWorkspace() {
             </div>
             <p className="mt-1.5 text-[#8593AA]">
               {primaryCheckpoint
-                ? 'Checkpoint "heavy" is active. You can finish this run and rewind to compare outcomes side by side.'
-                : 'Uncover Jordan\'s mood ("heavy") to unlock the automatic decision checkpoint.'}
+                ? `Checkpoint "${checkpointWord}" is active. You can finish this run and rewind to compare outcomes side by side.`
+                : `Uncover ${patientFirst}'s mood ("${checkpointWord}") to unlock the automatic decision checkpoint.`}
             </p>
             {completedBranches.length >= 1 && (
               <div className="mt-3 flex flex-wrap gap-2">
@@ -1374,7 +1523,7 @@ function EncounterWorkspace() {
                 <div className="text-[#8593AA]">Disclosures</div>
                 <div className="mt-0.5 font-mono text-sm font-bold text-sky-300">
                   {endedSummary.branch.finalState.unlocked.length} /{" "}
-                  {JORDAN_SCENARIO.disclosures.length}
+                  {scenario.disclosures.length}
                 </div>
               </div>
               <div>
@@ -1392,7 +1541,7 @@ function EncounterWorkspace() {
                   onClick={() => void handleRewind(primaryCheckpoint)}
                   className="rounded-xl border border-violet-400/50 bg-violet-950/70 px-4 py-2 text-xs font-semibold text-violet-100 hover:bg-violet-900/80 cursor-pointer"
                 >
-                  ↺ Rewind to &ldquo;heavy&rdquo; Checkpoint
+                  ↺ Rewind to &ldquo;{checkpointWord}&rdquo; Checkpoint
                 </button>
               )}
               {completedBranches.length >= 2 && (
@@ -1413,6 +1562,15 @@ function EncounterWorkspace() {
           </div>
         </div>
       )}
+
+      <GeneratePatientModal
+        open={patientPickerOpen}
+        onClose={() => setPatientPickerOpen(false)}
+        activeScenarioId={scenario.id}
+        savedScenarios={savedScenarios}
+        onSelectScenario={handleSwitchPatient}
+        onGeneratedScenario={handleSwitchPatient}
+      />
 
       {/* Persistent Safety & 988 Lifeline Footer (Non-Negotiable) */}
       <footer className="border-t border-white/10 bg-[#080E1A] px-4 py-3 text-xs text-[#8593AA]">

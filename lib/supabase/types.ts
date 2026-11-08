@@ -94,6 +94,8 @@ export interface EncounterSessionWithBranches {
     patient_age: number;
     specialty: string;
     difficulty: string;
+    /** Full case payload; ScenarioV2 for AI-generated cases (see lib/scenarios). */
+    scenario_json?: unknown;
   } | null;
   encounter_branches: EncounterBranchSummary[];
 }

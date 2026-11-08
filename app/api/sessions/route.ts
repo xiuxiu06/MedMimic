@@ -1,4 +1,5 @@
 import { evaluateOutcome, JORDAN_SCENARIO } from "../../../lib/engine";
+import type { ScenarioV2 } from "../../../lib/scenarios";
 import { scoreBranch } from "../../../lib/scoring";
 import { getCurrentUser } from "../../../lib/auth/currentUser";
 import { getSupabaseServerClient } from "../../../lib/supabase/server";
@@ -11,6 +12,8 @@ import type { Branch, Checkpoint, Debrief } from "../../../lib/types";
 export interface SyncSessionRequestBody {
   sessionId?: string | null;
   scenarioId?: string;
+  /** Present for AI-generated patients (not seeded in the scenarios table). */
+  scenario?: ScenarioV2;
   modeUsed?: "text" | "voice" | "mixed";
   checkpoint?: Checkpoint;
   completedBranch?: Branch;
@@ -87,7 +90,8 @@ export async function GET() {
         patient_name,
         patient_age,
         specialty,
-        difficulty
+        difficulty,
+        scenario_json
       ),
       encounter_branches (
         id,
@@ -200,6 +204,43 @@ export async function POST(request: Request) {
           created_by: user.id,
         });
       }
+    } else if (body.scenario?.patient?.name) {
+      // AI-generated patients live in the learner's browser; register them once
+      // (unpublished, owned by this user) so the scenario_id foreign key holds.
+      const generated = body.scenario;
+      const { data: existingScenario } = await supabase
+        .from("scenarios")
+        .select("id")
+        .eq("id", scenarioId)
+        .maybeSingle();
+
+      if (!existingScenario) {
+        const { error: scenarioError } = await supabase.from("scenarios").insert({
+          id: scenarioId,
+          slug: scenarioId,
+          title: (generated.title || generated.patient.name).slice(0, 200),
+          specialty: "psychiatry",
+          difficulty:
+            generated.difficulty === "advanced" ? "advanced" : "intermediate",
+          patient_name: generated.patient.name,
+          patient_age: Math.min(120, Math.max(1, Math.round(generated.patient.age || 30))),
+          patient_gender: generated.gender ?? "male",
+          voice_name: generated.voiceName ?? "Achird",
+          chief_complaint: generated.patient.opening,
+          scenario_json: generated,
+          intake_json: generated.briefing?.intake ?? [],
+          avatar_config: generated.avatar ?? {},
+          is_ai_generated: true,
+          is_published: false,
+          created_by: user.id,
+        });
+        if (scenarioError) {
+          return Response.json(
+            { ok: false, error: `Could not register generated case: ${scenarioError.message}` },
+            { status: 500 },
+          );
+        }
+      }
     }
 
     // 3. Create or fetch encounter_sessions row
@@ -245,8 +286,9 @@ export async function POST(request: Request) {
     }
 
     // 4. Upsert checkpoint snapshot if provided
+    let checkpointError: string | undefined;
     if (body.checkpoint) {
-      await supabase.from("encounter_checkpoints").upsert(
+      const { error: cpErr } = await supabase.from("encounter_checkpoints").upsert(
         {
           session_id: sessionId,
           user_id: user.id,
@@ -257,6 +299,11 @@ export async function POST(request: Request) {
         },
         { onConflict: "session_id,checkpoint_key" },
       );
+      if (cpErr) {
+        // Non-fatal (the run itself still syncs), but never silent.
+        checkpointError = cpErr.message;
+        console.error("[sessions] checkpoint upsert failed:", cpErr.message);
+      }
     }
 
     // 5. Upsert completed branch + rubric scores + outcome if provided
@@ -329,6 +376,7 @@ export async function POST(request: Request) {
     return Response.json({
       ok: true,
       sessionId,
+      ...(checkpointError ? { checkpointError } : {}),
     });
   } catch (err) {
     return Response.json(

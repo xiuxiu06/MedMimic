@@ -8,7 +8,9 @@ import { DebriefView } from "@/components/debrief/DebriefView";
 import { SafetyFooter } from "@/components/SafetyFooter";
 import { formatTime } from "@/lib/labels";
 import { mockDebrief1, mockOutcome1, mockRun1, mockRun2 } from "@/lib/mock/debrief";
+import { firstName, scenarioForCase } from "@/lib/activeScenario";
 import { isMockMode, loadRuns, runLabel } from "@/lib/runs";
+import { isJordanCaseId } from "@/lib/scenarios";
 import type { Branch } from "@/lib/types";
 
 const CACHE_PREFIX = "medmimic:debrief:";
@@ -24,6 +26,14 @@ function cacheKey(branch: Branch): string {
   return `${CACHE_PREFIX}${branch.id}:${(h >>> 0).toString(36)}`;
 }
 
+/** One-line patient description for the debrief prompt; undefined = server default (Jordan). */
+function patientSummary(branch: Branch): string | undefined {
+  if (isJordanCaseId(branch.caseId)) return undefined;
+  const s = scenarioForCase(branch.caseId);
+  const reason = s.briefing?.intake?.[0]?.value ?? s.title;
+  return `${firstName(s)}, ${s.patient.age}, ${reason}; hidden depression and suicidal thoughts`;
+}
+
 async function fetchDebrief(branch: Branch): Promise<DebriefResponse> {
   const key = cacheKey(branch);
   try {
@@ -35,7 +45,7 @@ async function fetchDebrief(branch: Branch): Promise<DebriefResponse> {
   const res = await fetch("/api/debrief", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ branch }),
+    body: JSON.stringify({ branch, patient: patientSummary(branch) }),
   });
   if (!res.ok) throw new Error(`Debrief failed (${res.status})`);
   const data = (await res.json()) as DebriefResponse;
@@ -140,7 +150,7 @@ export default function DebriefPage() {
         {status === "empty" && (
           <section className="flex flex-col items-center gap-4 rounded-[20px] border border-line bg-panel px-6 py-16 text-center">
             <h1 className="font-display text-2xl font-bold">No completed run yet</h1>
-            <p className="max-w-md text-muted">Finish an encounter with Jordan to see your debrief here.</p>
+            <p className="max-w-md text-muted">Finish an encounter to see your debrief here.</p>
             <Link href="/encounter" className="inline-flex min-h-11 items-center rounded-xl bg-ok px-6 font-bold text-[#062012]">
               Start the encounter
             </Link>
