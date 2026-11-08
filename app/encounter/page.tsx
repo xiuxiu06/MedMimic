@@ -6,6 +6,7 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -17,12 +18,13 @@ import {
 } from "../../lib/supabase/sync";
 import { AppHeader } from "../../components/AppHeader";
 import {
-  applyStudentAction,
   createInitialEngineState,
   DEMO_CHECKPOINT_ID,
   ENGINE_EVENTS,
   evaluateOutcome,
   getEncounterHints,
+  phq9Result,
+  removeStudentAction,
   setStudentRisk,
   type EncounterOutcome,
 } from "../../lib/engine";
@@ -111,6 +113,39 @@ const ACTION_TITLES: Record<ActionId, string> = {
   sleep_aid: "Recommended Sleep Aid",
 };
 
+/**
+ * What the clinician says when placing each order. It goes through the normal turn, so the
+ * patient answers in character and the usual trust/disclosure rules decide what they reveal
+ * (a guarded patient denies on the C-SSRS; a trusting one discloses).
+ */
+const ACTION_SCRIPTS: Record<ActionId, string> = {
+  phq9: "I'd like to go through a short standard questionnaire, the PHQ-9. Over the last two weeks, how often have you felt down or hopeless, lost interest in things, had trouble sleeping, or had thoughts that you'd be better off dead or of hurting yourself?",
+  cssrs:
+    "I'm going to ask a few direct questions I ask everyone. In the past month, have you wished you were dead or wished you could go to sleep and not wake up? Have you had any thoughts of killing yourself?",
+  safety_plan:
+    "I'd like us to make a safety plan together: the warning signs that things are getting worse, people you can reach out to, and how we can make your home safer, like locking up or getting rid of extra medications.",
+  consult:
+    "I'd like you to talk with our psychiatrist today. I'll walk you over myself and stay with you until they see you.",
+  sleep_aid:
+    "I'll write you something to help you sleep, and you can head home tonight.",
+};
+
+function phq9Readout(score: number, item9: number): string {
+  const severity =
+    score >= 20
+      ? "Severe"
+      : score >= 15
+        ? "Moderately severe"
+        : score >= 10
+          ? "Moderate"
+          : score >= 5
+            ? "Mild"
+            : "Minimal";
+  return item9 > 0
+    ? `Score: ${score}/27 (${severity}). Item 9 positive: ask directly about suicidal thoughts, plan and means.`
+    : `Score: ${score}/27 (${severity}). Item 9 denied; guarded patients often under-report, so follow up in your own words.`;
+}
+
 const LABEL_DISPLAY: Record<TurnLabel, string> = {
   asked_mood: "Asked mood",
   asked_onset: "Asked onset",
@@ -174,14 +209,6 @@ function createDefaultMessages(
 /** Runs saved before multi-patient have no caseId and belong to Jordan. */
 function isSameCase(a: string | null | undefined, b: string | null | undefined) {
   return (isJordanCaseId(a) && isJordanCaseId(b)) || a === b;
-}
-
-/** Self-reported PHQ-9 total: Jordan's scripted 19, a stable 15–22 for other patients. */
-function phq9ScoreFor(scenario: ScenarioV2): number {
-  if (isJordanCaseId(scenario.id)) return 19;
-  let h = 0;
-  for (const ch of scenario.id) h = (h * 31 + ch.charCodeAt(0)) | 0;
-  return 15 + (Math.abs(h) % 8);
 }
 
 function checkpointKeywordRegex(scenario: ScenarioV2): RegExp {
@@ -512,11 +539,12 @@ function EncounterWorkspace() {
   }, []);
 
   const submitStudentMessage = useCallback(
-    async (rawText?: string) => {
+    async (rawText?: string, action?: ActionId) => {
       const text = (rawText ?? inputText).trim();
       if (!text || isSubmitting) return;
 
-      setInputText("");
+      // Orders send a scripted line; keep whatever the learner was typing.
+      if (!action) setInputText("");
       setUiError(null);
       setIsSubmitting(true);
 
@@ -537,6 +565,7 @@ function EncounterWorkspace() {
           body: JSON.stringify({
             mode: useVoiceOutput ? "voice" : "text",
             studentText: text,
+            ...(action ? { action } : {}),
             state: engineState,
             messages: priorMessages,
             timeline,
@@ -608,17 +637,30 @@ function EncounterWorkspace() {
   const handleSelectAction = useCallback(
     (action: ActionId) => {
       setActionsMenuOpen(false);
-      const result = applyStudentAction(
-        engineState,
-        timeline,
-        action,
-        engineState.elapsedSec,
-        scenarioRef.current,
-      );
-      setEngineState(result.state);
-      setTimeline(result.timeline);
+      if (engineState.actions.includes(action)) {
+        // Undo an order placed by mistake
+        const result = removeStudentAction(
+          engineState,
+          timeline,
+          action,
+          scenarioRef.current,
+        );
+        setEngineState(result.state);
+        setTimeline(result.timeline);
+        return;
+      }
+      // Place the order and say it to the patient, who answers in character
+      void submitStudentMessage(ACTION_SCRIPTS[action], action);
     },
-    [engineState, timeline],
+    [engineState, submitStudentMessage, timeline],
+  );
+
+  const phq9Entry = useMemo(
+    () =>
+      [...timeline]
+        .reverse()
+        .find((e) => e.kind === "action" && e.label === "phq9"),
+    [timeline],
   );
 
   const handleManualCheckpoint = useCallback(() => {
@@ -833,7 +875,6 @@ function EncounterWorkspace() {
   );
   const labelMap = useMemo(() => disclosureLabels(scenario), [scenario]);
   const patientFirst = firstName(scenario);
-  const phq9Score = useMemo(() => phq9ScoreFor(scenario), [scenario]);
   const checkpointWord = scenario.checkpoint?.keyword ?? "heavy";
   const checkpointQuote =
     scenario.checkpoint?.quote ?? "Everything's just… heavy.";
@@ -860,11 +901,11 @@ function EncounterWorkspace() {
 
   return (
     <div className="flex min-h-screen flex-col bg-ink text-fg">
-      {/* Shared MedMimic Step Header + Encounter Controls */}
+      {/* Shared pinned header; encounter controls live in its toolbar row */}
       <AppHeader
         active="encounter"
-        right={
-          <div className="flex flex-wrap items-center gap-2">
+        toolbar={
+          <div className="mx-auto flex w-full max-w-7xl flex-wrap items-center gap-2">
             <span className="inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-[#131E35] px-2.5 py-1 text-xs font-mono text-[#9AA8BF]">
               <span>{branchId.toUpperCase()}</span>
               {parentCheckpoint && (
@@ -888,6 +929,9 @@ function EncounterWorkspace() {
               <span className="max-w-[10rem] truncate">{scenario.patient.name}</span>
               <span className="text-[#9AA8BF]">· Switch patient</span>
             </button>
+
+            {/* Session controls on the right */}
+            <div className="hidden flex-1 sm:block" />
 
             {/* Gemini Live Voice Toggle */}
             {live.status === "connected" ? (
@@ -1385,8 +1429,10 @@ function EncounterWorkspace() {
                     <button
                       key={opt.id}
                       type="button"
+                      disabled={!alreadyDone && (isSubmitting || Boolean(endedSummary))}
                       onClick={() => handleSelectAction(opt.id)}
-                      className="flex w-full items-start justify-between gap-2 border-b border-white/5 px-3.5 py-2.5 text-left hover:bg-[#172542] last:border-b-0 cursor-pointer"
+                      title={alreadyDone ? "Click to undo this order" : "Place this order (you'll say it to the patient)"}
+                      className="flex w-full items-start justify-between gap-2 border-b border-white/5 px-3.5 py-2.5 text-left hover:bg-[#172542] last:border-b-0 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <div>
                         <div className="text-xs font-semibold text-[#E6EDF7]">
@@ -1398,7 +1444,7 @@ function EncounterWorkspace() {
                       </div>
                       {alreadyDone && (
                         <span className="shrink-0 rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-bold text-emerald-300">
-                          ✓ Done
+                          ✓ Done · Undo
                         </span>
                       )}
                     </button>
@@ -1423,14 +1469,27 @@ function EncounterWorkspace() {
                         : "border-emerald-400/30 bg-emerald-950/25 text-emerald-100"
                     }`}
                   >
-                    <div className="font-semibold">
-                      ✓ {ACTION_TITLES[act]}
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-semibold">✓ {ACTION_TITLES[act]}</span>
+                      {!endedSummary && (
+                        <button
+                          type="button"
+                          onClick={() => handleSelectAction(act)}
+                          className="shrink-0 rounded-md border border-white/15 px-1.5 py-0.5 text-[10px] text-[#9AA8BF] hover:text-white cursor-pointer"
+                          title="Withdraw this order"
+                        >
+                          Undo
+                        </button>
+                      )}
                     </div>
                     {act === "phq9" && (
                       <div className="mt-1 text-[11px] text-[#B8C7E0]">
-                        Score: {phq9Score}/27 (
-                        {phq9Score >= 20 ? "Severe" : "Moderately severe"} depressive
-                        symptoms; Item 9 requires direct verbal follow-up).
+                        {(() => {
+                          const [, score, item9] = (phq9Entry?.quote ?? "").split(":");
+                          if (score) return phq9Readout(Number(score), Number(item9));
+                          const live = phq9Result(engineState);
+                          return phq9Readout(live.score, live.item9);
+                        })()}
                       </div>
                     )}
                     {act === "cssrs" && (
@@ -1603,6 +1662,17 @@ function EncounterWorkspace() {
 }
 
 export default function EncounterPage() {
+  // cacheComponents keeps visited routes alive in a hidden <Activity> instead of unmounting
+  // them. The workspace hydrates from localStorage only once, so after the learner switched
+  // patients (briefing / login / picker) or reset elsewhere, returning here showed the old
+  // patient's run. Remount the workspace each time this page is hidden: everything it
+  // needs (active session, checkpoints, runs, active patient) is persisted, and Live voice
+  // disconnects in its own cleanup.
+  const [workspaceKey, setWorkspaceKey] = useState(0);
+  useLayoutEffect(() => {
+    return () => setWorkspaceKey((k) => k + 1);
+  }, []);
+
   return (
     <Suspense
       fallback={
@@ -1611,7 +1681,7 @@ export default function EncounterPage() {
         </div>
       }
     >
-      <EncounterWorkspace />
+      <EncounterWorkspace key={workspaceKey} />
     </Suspense>
   );
 }

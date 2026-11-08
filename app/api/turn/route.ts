@@ -8,6 +8,7 @@ import { createCheckpoint } from "../../../lib/checkpoints";
 import {
   applyStudentAction,
   applyStudentTurn,
+  phq9Result,
   createInitialEngineState,
   DEMO_CHECKPOINT_ID,
   evaluateOutcome,
@@ -181,6 +182,24 @@ async function generatePatientTextReply(
   return "Yeah, I'm just completely worn down right now and trying to figure out how to get some relief.";
 }
 
+/**
+ * Freeze the PHQ-9 result on its timeline entry ("phq9:<score>:<item9>") using what the
+ * patient endorsed in the turn the screener was given, so later disclosures don't rewrite it.
+ */
+function recordPhq9Result(
+  timeline: TimelineEvent[],
+  state: EngineState,
+): TimelineEvent[] {
+  const idx = timeline.findLastIndex(
+    (e) => e.kind === "action" && e.label === "phq9" && !e.quote,
+  );
+  if (idx < 0) return timeline;
+  const { score, item9 } = phq9Result(state);
+  const next = [...timeline];
+  next[idx] = { ...next[idx], quote: `phq9:${score}:${item9}` };
+  return next;
+}
+
 export async function POST(request: Request) {
   const limited = rateLimit(request, "turn");
   if (limited) return limited;
@@ -324,6 +343,8 @@ export async function POST(request: Request) {
         }
       }
 
+      if (body.action === "phq9") timeline = recordPhq9Result(timeline, state);
+
       return Response.json({
         ok: true,
         mode,
@@ -344,6 +365,7 @@ export async function POST(request: Request) {
     }
 
     // Action-only or risk-only update (no new student utterance)
+    if (body.action === "phq9") timeline = recordPhq9Result(timeline, state);
     const patientPrompt = buildPatientPrompt(state, activeScenario);
     return Response.json({
       ok: true,

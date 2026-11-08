@@ -442,6 +442,67 @@ export function applyStudentAction(
   };
 }
 
+/**
+ * Withdraw a clinical order the student placed by mistake (e.g. a sleep aid). The
+ * conversation that came with it stays; only the order and its timeline entry go.
+ */
+export function removeStudentAction(
+  state: EngineState,
+  timeline: TimelineEvent[],
+  action: ActionId,
+  scenario?: Scenario | ScenarioV2,
+): { state: EngineState; timeline: TimelineEvent[] } {
+  const nextActions = state.actions.filter((a) => a !== action);
+  const nextTimeline = timeline.filter(
+    (e) => !(e.kind === "action" && e.label === action),
+  );
+  const nextEmotion = deriveEmotion(
+    state.trust,
+    new Set(state.unlocked),
+    nextActions,
+    new Set(),
+    new Set(),
+    state.emotion,
+    scenario,
+  );
+  return {
+    state: { ...state, actions: nextActions, emotion: nextEmotion },
+    timeline: nextTimeline,
+  };
+}
+
+export interface Phq9Result {
+  score: number;
+  /** Item 9 (thoughts of being better off dead / self-harm), 0–3 */
+  item9: number;
+  severity: "minimal" | "mild" | "moderate" | "moderately severe" | "severe";
+}
+
+/**
+ * PHQ-9 is self-report, so the total reflects what the patient is willing to endorse
+ * right now: sleep/energy items are always reported (that's why they came in); mood,
+ * hopelessness and item 9 only once the patient has disclosed them. Jordan fully open = 19.
+ */
+export function phq9Result(state: EngineState): Phq9Result {
+  const unlocked = new Set(state.unlocked);
+  const somatic = 7; // sleep 3, tiredness 3, concentration 1
+  const mood = unlocked.has("low_mood") ? 5 : 1; // depressed mood + anhedonia
+  const hope = unlocked.has("hopelessness") ? 5 : 1; // worthlessness, appetite, psychomotor
+  const item9 = unlocked.has("suicidal_thoughts") ? 2 : 0;
+  const score = somatic + mood + hope + item9;
+  const severity: Phq9Result["severity"] =
+    score >= 20
+      ? "severe"
+      : score >= 15
+        ? "moderately severe"
+        : score >= 10
+          ? "moderate"
+          : score >= 5
+            ? "mild"
+            : "minimal";
+  return { score, item9, severity };
+}
+
 export function setStudentRisk(
   state: EngineState,
   risk: RiskLevel,

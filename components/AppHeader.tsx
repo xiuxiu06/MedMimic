@@ -35,9 +35,23 @@ export function Logo() {
   );
 }
 
-export function AppHeader({ active, right }: { active?: Step; right?: ReactNode }) {
+/**
+ * Shared top bar, pinned on every page. The main row is identical on all tabs
+ * (logo · steps · account); page-specific controls go in `toolbar`, a second pinned row.
+ * `right` is only for a short label/link next to the account chip.
+ */
+export function AppHeader({
+  active,
+  right,
+  toolbar,
+}: {
+  active?: Step;
+  right?: ReactNode;
+  toolbar?: ReactNode;
+}) {
   return (
-    <header className="flex flex-wrap items-center justify-between gap-4 border-b border-line bg-header px-4 py-4 sm:px-8">
+    <header className="sticky top-0 z-40 border-b border-line bg-header/95 backdrop-blur">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 sm:px-8 lg:grid lg:grid-cols-[1fr_auto_1fr]">
       <Logo />
       <nav aria-label="Encounter steps" className="flex flex-wrap gap-1.5 text-sm">
         {STEPS.map((s) => (
@@ -55,10 +69,14 @@ export function AppHeader({ active, right }: { active?: Step; right?: ReactNode 
           </Link>
         ))}
       </nav>
-      <div className="flex flex-wrap items-center gap-2.5">
+      <div className="flex flex-wrap items-center gap-2.5 lg:justify-self-end">
         {right}
         <AuthHeaderChip />
       </div>
+      </div>
+      {toolbar && (
+        <div className="border-t border-line px-4 py-2 sm:px-8">{toolbar}</div>
+      )}
     </header>
   );
 }
