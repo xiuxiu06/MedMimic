@@ -1,5 +1,6 @@
 import { evaluateOutcome, JORDAN_SCENARIO } from "../../../lib/engine";
 import { scoreBranch } from "../../../lib/scoring";
+import { getCurrentUser } from "../../../lib/auth/currentUser";
 import { getSupabaseServerClient } from "../../../lib/supabase/server";
 import type {
   EncounterSessionWithBranches,
@@ -48,9 +49,8 @@ export async function GET() {
     });
   }
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // Auth0 branch: identity comes from the Auth0 session (sub), not Supabase Auth.
+  const user = await getCurrentUser();
 
   if (!user) {
     return Response.json({
@@ -127,7 +127,13 @@ export async function GET() {
     ok: true,
     configured: true,
     authenticated: true,
-    user: { id: user.id, email: user.email ?? null },
+    user: {
+      id: user.id,
+      email: user.email ?? null,
+      name: user.name,
+      roles: user.roles,
+      isInstructor: user.isInstructor,
+    },
     profile: profile ?? null,
     sessions: (sessions ?? []) as unknown as EncounterSessionWithBranches[],
   });
@@ -144,9 +150,7 @@ export async function POST(request: Request) {
       return Response.json({ ok: true, skipped: "supabase_not_configured" });
     }
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const user = await getCurrentUser();
 
     if (!user) {
       return Response.json({ ok: true, skipped: "unauthenticated" });

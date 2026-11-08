@@ -1,34 +1,24 @@
 import "server-only";
-import { createServerClient } from "@supabase/ssr";
-import type { SupabaseClient } from "@supabase/supabase-js";
-import { cookies } from "next/headers";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { getIdToken } from "@/lib/auth/currentUser";
 import { getSupabasePublicConfig } from "./config";
 
 /**
- * Creates a request-scoped Supabase server client for Next.js App Router
- * Route Handlers and Server Components (Vercel Serverless compatible).
+ * Request-scoped Supabase client for Route Handlers (Auth0 branch).
+ *
+ * Signed in: every request carries the user's **Auth0 ID token**. Supabase trusts it through
+ * Third-Party Auth (Dashboard → Authentication → Third-Party Auth → Auth0), and RLS policies read
+ * `auth.jwt()->>'sub'`. Guests: no token, so the client runs as `anon` (published scenarios only).
  */
 export async function getSupabaseServerClient(): Promise<SupabaseClient | null> {
   const cfg = getSupabasePublicConfig();
   if (!cfg) return null;
 
-  const cookieStore = await cookies();
+  const idToken = await getIdToken();
 
-  return createServerClient(cfg.url, cfg.anonKey, {
-    cookies: {
-      getAll() {
-        return cookieStore.getAll();
-      },
-      setAll(cookiesToSet) {
-        try {
-          for (const { name, value, options } of cookiesToSet) {
-            cookieStore.set(name, value, options);
-          }
-        } catch {
-          // Called from a Server Component where mutating cookies is a no-op;
-          // Route Handlers (/auth/callback, /api/*) persist refreshed cookies.
-        }
-      },
-    },
+  return createClient(cfg.url, cfg.anonKey, {
+    // Third-party auth: hand Supabase the Auth0 JWT instead of a Supabase Auth session.
+    ...(idToken ? { accessToken: async () => idToken } : {}),
+    auth: { persistSession: false, autoRefreshToken: false },
   });
 }

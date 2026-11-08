@@ -1,6 +1,7 @@
 import { resolveFastModel } from "../../../lib/classifier";
 import { JORDAN_SCENARIO } from "../../../lib/engine";
 import { gemini } from "../../../lib/gemini";
+import { getCurrentUser } from "../../../lib/auth/currentUser";
 import { getSupabaseServerClient } from "../../../lib/supabase/server";
 import type { ScenarioRecord } from "../../../lib/supabase/types";
 import type { Scenario } from "../../../lib/types";
@@ -143,9 +144,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const user = await getCurrentUser();
     if (!user) {
       return Response.json(
         { ok: false, error: "Sign in required to save patient scenarios." },
@@ -154,6 +153,21 @@ export async function POST(request: Request) {
     }
 
     const body = (await request.json()) as CreateScenarioRequestBody;
+
+    // Auth0 RBAC: only instructors may use the Gemini case generator or publish cases.
+    // (Postgres RLS enforces the publish rule too, via public.is_instructor().)
+    if (body.generatePrompt?.trim() && !user.isInstructor) {
+      return Response.json(
+        { ok: false, error: "Only instructors can generate new patient cases with AI." },
+        { status: 403 },
+      );
+    }
+    if (body.isPublished && !user.isInstructor) {
+      return Response.json(
+        { ok: false, error: "Only instructors can publish cases to all learners." },
+        { status: 403 },
+      );
+    }
     const specialty = body.specialty?.trim() || "psychiatry";
     const difficulty = body.difficulty ?? "intermediate";
 

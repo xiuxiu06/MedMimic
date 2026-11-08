@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AppHeader } from "../../components/AppHeader";
 import { SafetyFooter } from "../../components/SafetyFooter";
-import { getSupabaseBrowserClient } from "../../lib/supabase/client";
 import { isSupabaseConfigured } from "../../lib/supabase/config";
 import { hydrateLocalStorageFromCloudSession } from "../../lib/supabase/sync";
 import type {
@@ -46,22 +45,14 @@ export default function LoginPage() {
   const router = useRouter();
   const configured = isSupabaseConfigured();
 
-  const [authTab, setAuthTab] = useState<"signin" | "signup">("signin");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [displayName, setDisplayName] = useState("");
-  const [trainingRole, setTrainingRole] =
-    useState<TrainingRole>("medical_student");
-  const [institution, setInstitution] = useState("");
-
   const [isLoadingSession, setIsLoadingSession] = useState(true);
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const [feedbackMsg, setFeedbackMsg] = useState<{
     tone: "ok" | "bad" | "info";
     text: string;
   } | null>(null);
 
   const [authedEmail, setAuthedEmail] = useState<string | null>(null);
+  const [isInstructor, setIsInstructor] = useState(false);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [sessions, setSessions] = useState<EncounterSessionWithBranches[]>([]);
   const [scenarios, setScenarios] = useState<ScenarioRecord[]>([]);
@@ -85,7 +76,7 @@ export default function LoginPage() {
       ]);
       const sessJson = (await sessRes.json()) as {
         authenticated?: boolean;
-        user?: { email: string | null };
+        user?: { email: string | null; name?: string | null; isInstructor?: boolean };
         profile?: UserProfile | null;
         sessions?: EncounterSessionWithBranches[];
       };
@@ -94,7 +85,8 @@ export default function LoginPage() {
       };
 
       if (sessJson.authenticated) {
-        setAuthedEmail(sessJson.user?.email ?? null);
+        setAuthedEmail(sessJson.user?.email ?? sessJson.user?.name ?? "Signed in");
+        setIsInstructor(Boolean(sessJson.user?.isInstructor));
         setProfile(sessJson.profile ?? null);
         setSessions(sessJson.sessions ?? []);
       } else {
@@ -125,134 +117,7 @@ export default function LoginPage() {
     };
   }, [refreshDashboard]);
 
-  const handlePasswordAuth = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const supabase = getSupabaseBrowserClient();
-    if (!supabase) {
-      setFeedbackMsg({
-        tone: "bad",
-        text: "Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to .env.local (or Vercel Environment Variables) first.",
-      });
-      return;
-    }
-
-    setIsSubmitting(true);
-    setFeedbackMsg(null);
-
-    try {
-      if (authTab === "signin") {
-        const { error } = await supabase.auth.signInWithPassword({
-          email: email.trim(),
-          password,
-        });
-        if (error) throw error;
-        await refreshDashboard();
-        setFeedbackMsg({
-          tone: "ok",
-          text: "Signed in! Your encounters and checkpoints now sync automatically.",
-        });
-      } else {
-        const cleanName =
-          displayName.trim() || email.trim().split("@")[0] || "Learner";
-        const { data, error } = await supabase.auth.signUp({
-          email: email.trim(),
-          password,
-          options: {
-            emailRedirectTo: `${window.location.origin}/auth/callback?next=/briefing`,
-            data: {
-              display_name: cleanName,
-              training_role: trainingRole,
-              institution: institution.trim() || null,
-            },
-          },
-        });
-        if (error) throw error;
-
-        if (data.session && data.user) {
-          await supabase.from("profiles").upsert(
-            {
-              id: data.user.id,
-              email: data.user.email ?? email.trim(),
-              display_name: cleanName,
-              training_role: trainingRole,
-              institution: institution.trim() || null,
-              last_login_at: new Date().toISOString(),
-            },
-            { onConflict: "id" },
-          );
-          await refreshDashboard();
-          setFeedbackMsg({
-            tone: "ok",
-            text: "Account created and signed in!",
-          });
-        } else {
-          setFeedbackMsg({
-            tone: "info",
-            text: "Check your email inbox to confirm your account, then sign in.",
-          });
-        }
-      }
-    } catch (err) {
-      setFeedbackMsg({
-        tone: "bad",
-        text: err instanceof Error ? err.message : "Authentication failed.",
-      });
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleMagicLink = async () => {
-    const supabase = getSupabaseBrowserClient();
-    if (!supabase) {
-      setFeedbackMsg({
-        tone: "bad",
-        text: "Supabase environment variables are not configured yet.",
-      });
-      return;
-    }
-    if (!email.trim()) {
-      setFeedbackMsg({
-        tone: "bad",
-        text: "Enter your email address above first to receive a magic sign-in link.",
-      });
-      return;
-    }
-
-    setIsSubmitting(true);
-    setFeedbackMsg(null);
-    try {
-      const { error } = await supabase.auth.signInWithOtp({
-        email: email.trim(),
-        options: {
-          emailRedirectTo: `${window.location.origin}/auth/callback?next=/briefing`,
-        },
-      });
-      if (error) throw error;
-      setFeedbackMsg({
-        tone: "info",
-        text: `Magic sign-in link sent to ${email.trim()}. Check your inbox!`,
-      });
-    } catch (err) {
-      setFeedbackMsg({
-        tone: "bad",
-        text: err instanceof Error ? err.message : "Failed to send magic link.",
-      });
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleSignOut = async () => {
-    const supabase = getSupabaseBrowserClient();
-    if (supabase) {
-      await supabase.auth.signOut();
-    }
-    setAuthedEmail(null);
-    setProfile(null);
-    setSessions([]);
-    setFeedbackMsg({ tone: "info", text: "Signed out." });
-  };
+  // Auth0: sign-in / sign-up / sign-out are hosted routes mounted by proxy.ts.
 
   const handleOpenSavedSession = (
     session: EncounterSessionWithBranches,
@@ -387,173 +252,36 @@ export default function LoginPage() {
             <section className="flex min-w-0 flex-[999_1_460px] flex-col gap-6 rounded-[20px] border border-line bg-panel p-6 sm:p-8">
               <div>
                 <div className="font-mono text-xs tracking-widest text-info">
-                  LEARNER &amp; INSTRUCTOR PORTAL
+                  LEARNER &amp; INSTRUCTOR PORTAL · SECURED BY AUTH0
                 </div>
                 <h1 className="mt-1 font-display text-3xl font-bold tracking-tight">
-                  {authTab === "signin"
-                    ? "Sign in to MedMimic"
-                    : "Create your learner account"}
+                  Sign in to MedMimic
                 </h1>
                 <p className="mt-1.5 text-sm text-muted">
                   Save encounter transcripts, decision checkpoints, rubric
-                  scores, and AI-generated patient cases across devices.
+                  scores, and patient cases across devices.
                 </p>
               </div>
 
-              {/* Tabs */}
-              <div
-                role="tablist"
-                aria-label="Authentication mode"
-                className="grid grid-cols-2 gap-2 rounded-xl bg-ink p-1.5"
-              >
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={authTab === "signin"}
-                  onClick={() => {
-                    setAuthTab("signin");
-                    setFeedbackMsg(null);
-                  }}
-                  className={`min-h-10 rounded-lg text-sm font-semibold transition-colors cursor-pointer ${
-                    authTab === "signin"
-                      ? "bg-chip text-fg"
-                      : "text-muted hover:text-fg"
-                  }`}
+              <div className="flex flex-col gap-3">
+                {/* Plain <a>: Auth0 routes must not be prefetched */}
+                <a
+                  href="/auth/login?returnTo=/login"
+                  className="inline-flex min-h-12 items-center justify-center rounded-xl bg-ok px-5 font-bold text-[#062012] hover:brightness-110"
                 >
-                  Sign In
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={authTab === "signup"}
-                  onClick={() => {
-                    setAuthTab("signup");
-                    setFeedbackMsg(null);
-                  }}
-                  className={`min-h-10 rounded-lg text-sm font-semibold transition-colors cursor-pointer ${
-                    authTab === "signup"
-                      ? "bg-chip text-fg"
-                      : "text-muted hover:text-fg"
-                  }`}
+                  Sign in with Auth0
+                </a>
+                <a
+                  href="/auth/login?screen_hint=signup&returnTo=/login"
+                  className="inline-flex min-h-12 items-center justify-center rounded-xl border border-line-2 px-5 font-semibold text-fg hover:bg-chip"
                 >
-                  Create Account
-                </button>
+                  Create a learner account
+                </a>
+                <p className="text-xs leading-relaxed text-muted">
+                  Google, passwordless email code, or email + password. Instructor
+                  accounts are assigned by the course team and require MFA.
+                </p>
               </div>
-
-              <form
-                onSubmit={(e) => void handlePasswordAuth(e)}
-                className="flex flex-col gap-4"
-              >
-                {authTab === "signup" && (
-                  <>
-                    <label className="flex flex-col gap-1.5 text-sm">
-                      <span className="font-medium text-fg-2">
-                        Display Name
-                      </span>
-                      <input
-                        type="text"
-                        value={displayName}
-                        onChange={(e) => setDisplayName(e.target.value)}
-                        placeholder="Alex Rivera, MS2"
-                        className="min-h-11 rounded-xl border border-line-2 bg-ink px-3.5 text-sm text-fg placeholder:text-faint focus:border-info focus:outline-none"
-                      />
-                    </label>
-
-                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                      <label className="flex flex-col gap-1.5 text-sm">
-                        <span className="font-medium text-fg-2">
-                          Training Role
-                        </span>
-                        <select
-                          value={trainingRole}
-                          onChange={(e) =>
-                            setTrainingRole(e.target.value as TrainingRole)
-                          }
-                          className="min-h-11 rounded-xl border border-line-2 bg-ink px-3 text-sm text-fg focus:border-info focus:outline-none"
-                        >
-                          {(
-                            Object.entries(ROLE_LABELS) as Array<
-                              [TrainingRole, string]
-                            >
-                          ).map(([val, text]) => (
-                            <option key={val} value={val}>
-                              {text}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-
-                      <label className="flex flex-col gap-1.5 text-sm">
-                        <span className="font-medium text-fg-2">
-                          School / Program{" "}
-                          <span className="text-faint">(optional)</span>
-                        </span>
-                        <input
-                          type="text"
-                          value={institution}
-                          onChange={(e) => setInstitution(e.target.value)}
-                          placeholder="University of Cincinnati"
-                          className="min-h-11 rounded-xl border border-line-2 bg-ink px-3.5 text-sm text-fg placeholder:text-faint focus:border-info focus:outline-none"
-                        />
-                      </label>
-                    </div>
-                  </>
-                )}
-
-                <label className="flex flex-col gap-1.5 text-sm">
-                  <span className="font-medium text-fg-2">Email Address</span>
-                  <input
-                    type="email"
-                    required
-                    autoComplete="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="student@medschool.edu"
-                    className="min-h-11 rounded-xl border border-line-2 bg-ink px-3.5 text-sm text-fg placeholder:text-faint focus:border-info focus:outline-none"
-                  />
-                </label>
-
-                <label className="flex flex-col gap-1.5 text-sm">
-                  <span className="font-medium text-fg-2">Password</span>
-                  <input
-                    type="password"
-                    required
-                    minLength={6}
-                    autoComplete={
-                      authTab === "signin" ? "current-password" : "new-password"
-                    }
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="At least 6 characters"
-                    className="min-h-11 rounded-xl border border-line-2 bg-ink px-3.5 text-sm text-fg placeholder:text-faint focus:border-info focus:outline-none"
-                  />
-                </label>
-
-                <div className="mt-1 flex flex-wrap items-center gap-3">
-                  <button
-                    type="submit"
-                    disabled={isSubmitting}
-                    className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl bg-ok px-6 text-sm font-bold text-[#062012] hover:brightness-110 disabled:opacity-50 cursor-pointer"
-                  >
-                    {isSubmitting
-                      ? "Please wait…"
-                      : authTab === "signin"
-                        ? "Sign In"
-                        : "Create Account"}
-                  </button>
-
-                  {authTab === "signin" && (
-                    <button
-                      type="button"
-                      disabled={isSubmitting}
-                      onClick={() => void handleMagicLink()}
-                      className="inline-flex min-h-11 items-center justify-center rounded-xl border border-line-2 bg-ink px-4 text-xs font-semibold text-fg-2 hover:bg-chip hover:text-fg disabled:opacity-50 cursor-pointer"
-                    >
-                      Email Magic Link
-                    </button>
-                  )}
-                </div>
-              </form>
 
               <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4 text-sm">
                 <span className="text-muted">
@@ -642,13 +370,12 @@ export default function LoginPage() {
                 >
                   Start / Resume Encounter →
                 </Link>
-                <button
-                  type="button"
-                  onClick={() => void handleSignOut()}
-                  className="inline-flex min-h-11 items-center rounded-xl border border-line-2 px-4 text-sm font-semibold text-muted hover:bg-chip hover:text-fg cursor-pointer"
+                <a
+                  href="/auth/logout"
+                  className="inline-flex min-h-11 items-center rounded-xl border border-line-2 px-4 text-sm font-semibold text-muted hover:bg-chip hover:text-fg"
                 >
                   Sign Out
-                </button>
+                </a>
               </div>
             </section>
 
@@ -833,6 +560,7 @@ export default function LoginPage() {
                 </div>
               </div>
 
+              {isInstructor ? (
               <form
                 onSubmit={(e) => void handleGenerateAiScenario(e)}
                 className="flex flex-col gap-4 rounded-[20px] border border-line bg-panel p-6 lg:col-span-5"
@@ -908,6 +636,16 @@ export default function LoginPage() {
                     : "✨ Generate & Save Patient Scenario"}
                 </button>
               </form>
+              ) : (
+                <section className="flex flex-col gap-3 rounded-[20px] border border-line bg-panel p-6 lg:col-span-5">
+                  <div className="font-mono text-xs tracking-widest text-cite">INSTRUCTOR ONLY · AUTH0 RBAC</div>
+                  <h2 className="font-display text-xl font-semibold">AI case generator</h2>
+                  <p className="text-sm leading-relaxed text-muted">
+                    Generating new patient cases with Gemini is limited to instructors, so every case
+                    learners see has been reviewed. Ask your course team for the instructor role.
+                  </p>
+                </section>
+              )}
             </section>
           </div>
         )}
