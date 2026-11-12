@@ -1,6 +1,6 @@
-# Auth0 setup (branch `b/s8-auth0`)
+# Auth0 setup
 
-`main` keeps Supabase Auth. This branch switches login to **Auth0** while keeping **Supabase as the database**, linked by Supabase **Third-Party Auth**.
+Login uses **Auth0**, and **Supabase** is the database. They are linked by Supabase **Third-Party Auth**.
 Without Auth0 env vars, the app still runs in guest mode, so nothing breaks before you finish these steps.
 
 ```
@@ -41,7 +41,6 @@ Postgres RLS: auth.jwt()->>'sub' (+ is_instructor())
 1. Dashboard → **Authentication → Sign In / Providers → Third-Party Auth** (or `/dashboard/project/aparubjawzdfkpspvqzm/auth/third-party`) → **Add provider → Auth0**. Enter your **tenant ID**: the part before `.auth0.com` in the domain, plus the region if your domain has one (e.g. `us`).
 2. **SQL Editor:** run `supabase/auth0-migration.sql` once.
    - It changes user ids to text and rewrites the RLS rules to use the JWT `sub` and the instructor role.
-   - It works for both `main` (Supabase Auth) and this branch, so running it is safe even before merging.
 
 ## 6. Environment variables
 `.env.local` (and the same names on Vercel → Settings → Environment Variables):
@@ -66,7 +65,7 @@ Restart `npm run dev` after editing `.env.local`.
 | **Continue as Guest** → full Jordan demo | Works with no login anywhere |
 | Header → **Sign out** | Back to guest |
 
-## What changed in code (this branch only)
+## Where Auth0 lives in the code
 - **New:**
   - `lib/auth0.ts`: Auth0 client; `null` when not configured
   - `proxy.ts`: mounts `/auth/*`; passes requests through when Auth0 isn't configured
@@ -76,7 +75,6 @@ Restart `npm run dev` after editing `.env.local`.
 - **`app/api/sessions`, `app/api/scenarios`:** `supabase.auth.getUser()` → `getCurrentUser()`. AI case generation and publishing are **instructor-only** (403 otherwise; also enforced by RLS).
 - **`app/login`:** the email/password and magic-link form is replaced by "Sign in with Auth0" and "Create a learner account" (plus guest). The history dashboard is unchanged. The AI generator is shown only to instructors.
 - **`components/AuthHeaderChip.tsx`:** uses Auth0 `useUser()`, with an Instructor badge and Sign out.
-- **Removed:** `app/auth/callback` (Auth0 owns `/auth/callback`), `lib/supabase/client.ts`, and the `@supabase/ssr` dependency.
 
 ## Pitch for "Best Use of Auth0"
 > Auth0 secures who can do what in an AI training tool. Students sign in with Google or a passwordless code. Instructors are assigned through Auth0 RBAC and must use MFA. Only instructors can use the Gemini case generator or publish cases, and Postgres RLS enforces the Auth0 role from the verified token, so the rule holds even if someone calls the API directly.
